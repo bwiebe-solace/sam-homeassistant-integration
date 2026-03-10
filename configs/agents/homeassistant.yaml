@@ -197,7 +197,7 @@ apps:
             type: stdio
             command: /Users/benjamin.wiebe/Workspace/.venv/bin/python
             args:
-              - /Users/benjamin.wiebe/Workspace/sam-homeassistant-integration/ha-integration/ha_rest_tools.py
+              - /Users/benjamin.wiebe/Workspace/sam-homeassistant-integration/agents/homeassistant/ha_rest_tools.py
           environment_variables:
             HA_URL: "${HA_URL}"
             HA_TOKEN: "${HA_TOKEN}"

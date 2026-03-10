@@ -93,7 +93,7 @@ apps:
             type: stdio
             command: /Users/benjamin.wiebe/Workspace/sam-homeassistant-integration/.venv/bin/python
             args:
-              - /Users/benjamin.wiebe/Workspace/sam-homeassistant-integration/data-analysis/data_analysis_tools.py
+              - /Users/benjamin.wiebe/Workspace/sam-homeassistant-integration/agents/data-analysis/data_analysis_tools.py
 
       session_service: *session_service
       artifact_service: *artifact_service
