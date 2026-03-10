@@ -1,29 +1,23 @@
 """
-MCP stdio server providing HomeAssistant sensor history analysis tools.
+MCP stdio server providing time-series analysis tools for HomeAssistant sensor history data.
 
-Fetch data:
-  - fetch_entity_history:   Pull raw state history directly from the HA REST API
+All tools accept a `data` parameter: a JSON string — array of {state, last_changed} objects,
+exactly as returned by get_entity_history with minimal_response=true:
+  [{"state": "0.0012", "last_changed": "2024-03-10T08:00:00+00:00"}, ...]
 
-Analyse data (all accept a `data` JSON string from fetch_entity_history):
+Tools:
   - analyze_timeseries:     Statistics overview + data type detection (start here)
   - detect_active_periods:  Find windows when a value is "active" above a threshold
   - detect_anomalies:       Find values outside the rolling baseline (sigma-based)
   - find_daily_patterns:    Compute hourly/day-of-week activity distribution
   - generate_chart:         Produce a base64-encoded PNG visualization
-
-Environment variables required:
-  HA_URL    Base URL of the HomeAssistant instance, e.g. http://homeassistant.local:8123
-  HA_TOKEN  Long-lived access token
 """
 
 import asyncio
 import base64
 import io
 import json
-import os
-from datetime import datetime, timedelta, timezone
 
-import httpx
 import matplotlib
 import matplotlib.pyplot as plt
 import numpy as np
@@ -33,13 +27,6 @@ from mcp.server.stdio import stdio_server
 from mcp import types
 
 matplotlib.use("Agg")
-
-_HA_URL = os.environ.get("HA_URL", "").rstrip("/")
-_HA_TOKEN = os.environ.get("HA_TOKEN", "")
-_HA_HEADERS = {
-    "Authorization": f"Bearer {_HA_TOKEN}",
-    "Content-Type": "application/json",
-}
 
 server = Server("data-analysis-tools")
 
@@ -65,36 +52,6 @@ def _is_numeric(df: pd.DataFrame) -> bool:
 @server.list_tools()
 async def list_tools() -> list[types.Tool]:
     return [
-        types.Tool(
-            name="fetch_entity_history",
-            description=(
-                "Fetch the full state history for a HomeAssistant entity directly from the HA REST API. "
-                "Returns a JSON string — an array of {state, last_changed} objects — that can be passed "
-                "directly as the `data` parameter to any of the analysis tools (analyze_timeseries, "
-                "detect_active_periods, detect_anomalies, find_daily_patterns, generate_chart). "
-                "Always call this first when given an entity_id. Use significant_changes_only=false "
-                "for analysis — you need every recorded data point, not just significant transitions."
-            ),
-            inputSchema={
-                "type": "object",
-                "properties": {
-                    "entity_id": {
-                        "type": "string",
-                        "description": "The HA entity ID to fetch history for, e.g. 'sensor.laundry_vibration_sensor_x_axis'.",
-                    },
-                    "hours_ago": {
-                        "type": "number",
-                        "description": "How many hours of history to retrieve. Default: 120 (5 days).",
-                    },
-                    "significant_changes_only": {
-                        "type": "boolean",
-                        "description": "If false (default for analysis), returns every recorded data point. Set to true only for sparse on/off sensors.",
-                    },
-                },
-                "required": ["entity_id"],
-                "additionalProperties": False,
-            },
-        ),
         types.Tool(
             name="analyze_timeseries",
             description=(
@@ -258,9 +215,7 @@ async def list_tools() -> list[types.Tool]:
 @server.call_tool()
 async def call_tool(name: str, arguments: dict) -> list[types.TextContent]:
     try:
-        if name == "fetch_entity_history":
-            result = await _fetch_entity_history(arguments)
-        elif name == "analyze_timeseries":
+        if name == "analyze_timeseries":
             result = _analyze_timeseries(arguments)
         elif name == "detect_active_periods":
             result = _detect_active_periods(arguments)
@@ -278,31 +233,6 @@ async def call_tool(name: str, arguments: dict) -> list[types.TextContent]:
 
 
 # ── Tool implementations ──────────────────────────────────────────────────────
-
-async def _fetch_entity_history(args: dict) -> dict:
-    if not _HA_URL or not _HA_TOKEN:
-        return {"error": "HA_URL and HA_TOKEN environment variables are required."}
-
-    entity_id = args["entity_id"]
-    hours_ago = float(args.get("hours_ago", 120))
-    significant_only = args.get("significant_changes_only", False)
-
-    start_time = datetime.now(timezone.utc) - timedelta(hours=hours_ago)
-    params = {"filter_entity_id": entity_id, "minimal_response": "true"}
-    if significant_only:
-        params["significant_changes_only"] = "true"
-
-    async with httpx.AsyncClient(headers=_HA_HEADERS, timeout=30) as client:
-        response = await client.get(
-            f"{_HA_URL}/api/history/period/{start_time.isoformat()}",
-            params=params,
-        )
-        response.raise_for_status()
-
-    data = response.json()
-    history = data[0] if data else []
-    return {"entity_id": entity_id, "point_count": len(history), "data": json.dumps(history)}
-
 
 def _analyze_timeseries(args: dict) -> dict:
     df = _parse_history(args["data"])

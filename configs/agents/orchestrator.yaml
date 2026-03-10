@@ -30,6 +30,7 @@ apps:
 
         Artifact Management Guidelines:
         - You must review your artifacts and return the ones that are important for the user by using artifact_return embed. You can use list_artifacts to see all available artifacts.
+        - Only surface artifacts that are genuinely useful to the user (charts, reports, generated documents). Do NOT use artifact_return or apply_embed_and_create_artifact on raw data returned by agents (e.g. JSON lists, entity dumps, history data) — that is intermediate data for your analysis only and must not be shown to the user.
         - Provide regular progress updates using `status_update` embed directives, especially before initiating any tool call.
 
       inject_system_purpose: true

@@ -174,6 +174,40 @@ apps:
         after they report that HA restarted with errors. Report the result ('valid' or
         'invalid') and include any error details if present.
 
+        ## Discovering Automation Opportunities
+        When the user asks what they can automate, what interesting things they can do,
+        or wants suggestions based on their devices:
+        - Query domains one at a time using list_entities (e.g. domain='light',
+          domain='switch', domain='sensor', domain='climate', domain='media_player',
+          domain='automation', domain='binary_sensor'). Do NOT call list_entities with
+          no filter — the result is too large and is only useful internally.
+        - Analyse the results entirely in your context window. Do NOT create any artifact
+          from the raw entity list — it is intermediate data, not a user-facing output.
+        - Return a curated, human-readable list of suggestions directly in your text
+          response. Group suggestions by theme (e.g. Lighting, Energy, Security, Comfort).
+
+        ## Sensor Analysis
+        When the user asks to analyse sensor data — detect when an appliance ran, find
+        anomalies, discover daily patterns, or generate a chart — use the analysis tools
+        (analyze_timeseries, detect_active_periods, detect_anomalies, find_daily_patterns,
+        generate_chart) in addition to the HA tools.
+
+        Workflow:
+        1. Call get_entity_history with significant_changes_only=false to retrieve every
+           recorded data point. Use hours_ago=48 (2 days) unless the user specifies
+           otherwise. Do NOT use get_entity_state — it returns only the current value.
+        2. Pass the raw JSON array returned by get_entity_history directly as the `data`
+           parameter to analyze_timeseries. The `data` value is the complete JSON string
+           from the tool result — do not summarise or truncate it.
+        3. Call the appropriate deeper analysis tool based on the pattern_hint returned
+           by analyze_timeseries.
+        4. Call generate_chart, then save the result using save_artifact with
+           content_type image/png and the suggested_artifact_name.
+
+        If get_entity_history returns fewer than 10 data points, report this clearly
+        to the user — it likely means the HA recorder has limited history for that
+        entity, not that the sensor has been inactive.
+
         ## Guidelines
         - Always prefer list_entities over GetLiveContext for state queries.
         - After calling any tool, you MUST always produce a text response that answers
@@ -188,6 +222,10 @@ apps:
           work around the restriction.
         - If a response includes date or time data, make sure that it is presented in the house's local timezone
           (from get_system_info) rather than UTC.
+        - NEVER use apply_embed_and_create_artifact on raw tool results such as entity
+          lists, history JSON, or any other intermediate data. That tool is only for
+          final, user-facing outputs such as charts or reports. Raw data from tool calls
+          is for your internal analysis only and must never be surfaced as an artifact.
 
       tools:
         - tool_type: builtin-group
@@ -212,6 +250,12 @@ apps:
             url: "${HA_URL}/api/mcp"
             headers:
               Authorization: "Bearer ${HA_TOKEN}"
+        - tool_type: mcp
+          connection_params:
+            type: stdio
+            command: /Users/benjamin.wiebe/Workspace/sam-homeassistant-integration/.venv/bin/python
+            args:
+              - /Users/benjamin.wiebe/Workspace/sam-homeassistant-integration/agents/data-analysis/data_analysis_tools.py
 
       session_service: *session_service
       artifact_service: *artifact_service
@@ -245,6 +289,9 @@ apps:
           - id: system_diagnostics
             name: "System Diagnostics"
             description: "Check HA version, error logs, config validity, and system info"
+          - id: sensor_analysis
+            name: "Sensor Analysis"
+            description: "Analyse sensor history to detect active periods, anomalies, and daily usage patterns; generate charts"
 
       agent_card_publishing:
         interval_seconds: 10
