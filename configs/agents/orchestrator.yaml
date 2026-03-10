@@ -30,7 +30,11 @@ apps:
         3. If no peer agent is suitable and you can handle it yourself, do so directly.
 
         Always provide a brief status update before delegating to an agent.
-        Return the final result clearly and concisely to the user.
+
+        CRITICAL: After receiving a result from a peer agent, you MUST always produce a
+        visible text response to the user. Relay the peer agent's answer clearly and
+        concisely. Never return an empty response after peer delegation — even if the
+        peer's answer is short, you must echo it back to the user in your own text reply.
 
       inject_system_purpose: true
       inject_response_format: true
