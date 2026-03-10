@@ -54,9 +54,9 @@ apps:
             command: /Users/benjamin.wiebe/Workspace/.venv/bin/python
             args:
               - /Users/benjamin.wiebe/Workspace/sam-homeassistant-integration/ha-integration/ha_rest_tools.py
-            env:
-              HA_URL: "${HA_URL}"
-              HA_TOKEN: "${HA_TOKEN}"
+          environment_variables:
+            HA_URL: "${HA_URL}"
+            HA_TOKEN: "${HA_TOKEN}"
         - tool_type: mcp
           connection_params:
             type: streamable-http
