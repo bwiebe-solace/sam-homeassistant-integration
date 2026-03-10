@@ -1,0 +1,37 @@
+log:
+  stdout_log_level: INFO
+  log_file_level: DEBUG
+  log_file: ha-mqtt-gateway.log
+
+!include ../../shared_config.yaml
+
+apps:
+  - name: ha_mqtt_gateway_app
+    app_base_path: .
+    app_module: solace_agent_mesh.gateway.generic.app
+
+    broker:
+      <<: *broker_connection
+
+    app_config:
+      namespace: ${NAMESPACE}
+      gateway_id: ha-mqtt-gateway
+      default_agent_name: OrchestratorAgent
+
+      session_service: *session_service
+      artifact_service: *artifact_service
+
+      gateway_adapter: gateways.ha_mqtt.adapter.HAMqttAdapter
+      adapter_config:
+        mqtt_host: "${SOLACE_MQTT_HOST}"
+        mqtt_port: ${SOLACE_MQTT_PORT, 8883}
+        mqtt_username: "${SOLACE_BROKER_USERNAME}"
+        mqtt_password: "${SOLACE_BROKER_PASSWORD}"
+        mqtt_tls: ${SOLACE_MQTT_TLS, true}
+        target_agent: "OrchestratorAgent"
+
+      system_purpose: >
+        You are SAM, a smart home assistant. Requests come from HomeAssistant
+        automations or the HA voice assistant pipeline. Be concise and action-oriented.
+        For device control confirmations, keep responses to one sentence.
+        For questions, answer directly without preamble.
