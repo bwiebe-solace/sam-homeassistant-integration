@@ -1,0 +1,20 @@
+{
+  "config": {
+    "step": {
+      "user": {
+        "title": "Connect to SAM",
+        "description": "Configure the connection to your Solace Agent Mesh instance.",
+        "data": {
+          "namespace": "SAM Namespace",
+          "timeout_seconds": "Response timeout (seconds)"
+        }
+      }
+    },
+    "error": {
+      "cannot_connect": "Could not connect — check that HA's MQTT integration is configured and the namespace is correct."
+    },
+    "abort": {
+      "already_configured": "SAM Workflows is already configured."
+    }
+  }
+}

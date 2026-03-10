@@ -1,0 +1,10 @@
+{
+  "domain": "sam_workflows",
+  "name": "SAM Workflows",
+  "version": "0.1.0",
+  "documentation": "https://github.com/bwiebe-solace/sam-homeassistant-integration",
+  "dependencies": ["mqtt"],
+  "requirements": [],
+  "iot_class": "local_push",
+  "config_flow": true
+}
