@@ -9,9 +9,10 @@ shared_config:
 
   - models:
     llm: &llm
-      model: ${LLM_MODEL_NAME, openai/gemini-2.0-flash}
+      model: ${LLM_MODEL_NAME, openai/gemini-flash-2}
       api_base: ${LLM_SERVICE_ENDPOINT}
       api_key: ${LLM_SERVICE_API_KEY}
+      parallel_tool_calls: true
       cache_strategy: "5m"
 
   - services:

@@ -17,7 +17,7 @@ apps:
       namespace: ${NAMESPACE}
       supports_streaming: true
       agent_name: "OrchestratorAgent"
-      display_name: "SAM"
+      display_name: "Orchestrator Agent"
       model: *llm
 
       instruction: |
@@ -60,4 +60,4 @@ apps:
         enabled: true
       inter_agent_communication:
         allow_list: ["*"]
-        request_timeout_seconds: 120
+        request_timeout_seconds: 600

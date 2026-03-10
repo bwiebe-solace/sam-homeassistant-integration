@@ -17,7 +17,7 @@ apps:
       namespace: ${NAMESPACE}
       supports_streaming: true
       agent_name: "HomeAssistantAgent"
-      display_name: "Smart Home"
+      display_name: "Home Assistant Agent"
       model: *llm
 
       instruction: |
