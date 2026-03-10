@@ -17,6 +17,11 @@ Tools:
   - get_error_log:            Recent HA error log via GET /api/error_log
   - get_camera_snapshot_url:  Viewable snapshot URL for a camera entity
   - check_config:             Validate configuration.yaml via POST /api/config/core/check_config
+  - create_automation:        Create or update an automation via POST /api/config/automation/config
+  - delete_automation:        Delete an automation via DELETE /api/config/automation/config/{id}
+  - create_script:            Create or update a script via POST /api/config/script/config/{id}
+  - delete_script:            Delete a script via DELETE /api/config/script/config/{id}
+  - create_helper:            Create or update an input_* helper via POST /api/config/{type}/config/{id}
   - call_service:             Call any HA service via POST /api/services/{domain}/{service}
 """
 
@@ -309,6 +314,147 @@ async def list_tools() -> list[types.Tool]:
             },
         ),
         types.Tool(
+            name="create_automation",
+            description=(
+                "Create a new HomeAssistant automation, or update an existing one. "
+                "Provide a config dict with at minimum: alias (string), trigger (list), action (list). "
+                "Optional fields: description (string), condition (list), mode (single/restart/queued/parallel). "
+                "To update an existing automation, provide automation_id (the internal ID from get_automation_config). "
+                "The automation is activated automatically after creation."
+            ),
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "config": {
+                        "type": "object",
+                        "description": (
+                            "Automation configuration object. Required keys: alias (string), "
+                            "trigger (list of trigger dicts), action (list of action dicts). "
+                            "Optional: description (string), condition (list), "
+                            "mode ('single'|'restart'|'queued'|'parallel', default 'single')."
+                        ),
+                    },
+                    "automation_id": {
+                        "type": "string",
+                        "description": (
+                            "Internal automation ID to update an existing automation. "
+                            "Obtain from get_automation_config. Omit to create a new automation."
+                        ),
+                    },
+                },
+                "required": ["config"],
+                "additionalProperties": False,
+            },
+        ),
+        types.Tool(
+            name="delete_automation",
+            description=(
+                "Delete a HomeAssistant automation by its internal config ID. "
+                "Obtain the config ID from get_automation_config (the 'id' field in the state attributes, "
+                "not the entity_id). The entity_id is 'automation.xxx'; the config ID is a string like '1a2b3c'. "
+                "This cannot be undone."
+            ),
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "automation_id": {
+                        "type": "string",
+                        "description": "Internal automation config ID (not the entity_id). Obtain from get_automation_config.",
+                    },
+                },
+                "required": ["automation_id"],
+                "additionalProperties": False,
+            },
+        ),
+        types.Tool(
+            name="create_script",
+            description=(
+                "Create a new HomeAssistant script, or update an existing one. "
+                "The script_id becomes the entity ID key (e.g. 'bedtime_routine' → 'script.bedtime_routine'). "
+                "The config must include alias and sequence (list of actions). "
+                "The script is activated automatically after creation."
+            ),
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "script_id": {
+                        "type": "string",
+                        "description": "Unique script identifier (snake_case), e.g. 'bedtime_routine'. Becomes the entity_id key.",
+                    },
+                    "config": {
+                        "type": "object",
+                        "description": (
+                            "Script configuration. Required: alias (string), sequence (list of action dicts). "
+                            "Optional: description (string), mode ('single'|'restart'|'queued'|'parallel')."
+                        ),
+                    },
+                },
+                "required": ["script_id", "config"],
+                "additionalProperties": False,
+            },
+        ),
+        types.Tool(
+            name="delete_script",
+            description=(
+                "Delete a HomeAssistant script by its script_id. "
+                "The script_id is the entity_id key without the 'script.' prefix "
+                "(e.g. for 'script.bedtime_routine', use script_id='bedtime_routine'). "
+                "This cannot be undone."
+            ),
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "script_id": {
+                        "type": "string",
+                        "description": "Script ID without 'script.' prefix, e.g. 'bedtime_routine'.",
+                    },
+                },
+                "required": ["script_id"],
+                "additionalProperties": False,
+            },
+        ),
+        types.Tool(
+            name="create_helper",
+            description=(
+                "Create or update a HomeAssistant input helper (input_boolean, input_number, "
+                "input_text, input_select, input_datetime, input_button). "
+                "The helper_id becomes part of the entity_id "
+                "(e.g. helper_type='input_boolean', helper_id='vacation_mode' → 'input_boolean.vacation_mode'). "
+                "Note: creating brand-new helpers via the API may not always work in all HA versions; "
+                "updating existing helpers is more reliable. For persistent new helpers, prefer the HA UI."
+            ),
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "helper_type": {
+                        "type": "string",
+                        "description": (
+                            "Helper type. One of: 'input_boolean', 'input_number', 'input_text', "
+                            "'input_select', 'input_datetime', 'input_button'."
+                        ),
+                    },
+                    "helper_id": {
+                        "type": "string",
+                        "description": "Unique identifier (snake_case), e.g. 'vacation_mode'.",
+                    },
+                    "config": {
+                        "type": "object",
+                        "description": (
+                            "Helper configuration. Always include 'name' (friendly name). "
+                            "input_boolean: {name, icon?, initial?}. "
+                            "input_number: {name, min, max, step?, initial?, unit_of_measurement?, mode?}. "
+                            "input_text: {name, initial?, min?, max?, pattern?, mode?}. "
+                            "input_select: {name, options (list of strings), initial?}. "
+                            "input_datetime: {name, has_date?, has_time?, initial?}. "
+                            "input_button: {name, icon?}."
+                        ),
+                    },
+                },
+                "required": ["helper_type", "helper_id", "config"],
+                "additionalProperties": False,
+            },
+        ),
+        types.Tool(
             name="call_service",
             description=(
                 "Call a HomeAssistant service to control any device. "
@@ -376,6 +522,16 @@ async def call_tool(name: str, arguments: dict) -> list[types.TextContent]:
             return await _get_camera_snapshot_url(client, arguments)
         elif name == "check_config":
             return await _check_config(client, arguments)
+        elif name == "create_automation":
+            return await _create_automation(client, arguments)
+        elif name == "delete_automation":
+            return await _delete_automation(client, arguments)
+        elif name == "create_script":
+            return await _create_script(client, arguments)
+        elif name == "delete_script":
+            return await _delete_script(client, arguments)
+        elif name == "create_helper":
+            return await _create_helper(client, arguments)
         elif name == "call_service":
             return await _call_service(client, arguments)
         else:
@@ -635,6 +791,90 @@ async def _check_config(
     response.raise_for_status()
     result = json.dumps(response.json(), indent=2)
     return [types.TextContent(type="text", text=result)]
+
+
+async def _create_automation(
+    client: httpx.AsyncClient, args: dict
+) -> list[types.TextContent]:
+    config = args["config"]
+    automation_id = args.get("automation_id")
+
+    if automation_id:
+        url = f"{HA_URL}/api/config/automation/config/{automation_id}"
+    else:
+        url = f"{HA_URL}/api/config/automation/config"
+
+    response = await client.post(url, json=config)
+    response.raise_for_status()
+    create_result = response.json()
+
+    await client.post(f"{HA_URL}/api/services/automation/reload")
+
+    return [types.TextContent(type="text", text=json.dumps(create_result, indent=2))]
+
+
+async def _delete_automation(
+    client: httpx.AsyncClient, args: dict
+) -> list[types.TextContent]:
+    automation_id = args["automation_id"]
+
+    response = await client.delete(f"{HA_URL}/api/config/automation/config/{automation_id}")
+    response.raise_for_status()
+
+    await client.post(f"{HA_URL}/api/services/automation/reload")
+
+    return [types.TextContent(type="text", text=f"Automation '{automation_id}' deleted successfully.")]
+
+
+async def _create_script(
+    client: httpx.AsyncClient, args: dict
+) -> list[types.TextContent]:
+    script_id = args["script_id"]
+    config = args["config"]
+
+    response = await client.post(f"{HA_URL}/api/config/script/config/{script_id}", json=config)
+    response.raise_for_status()
+    create_result = response.json()
+
+    await client.post(f"{HA_URL}/api/services/script/reload")
+
+    return [types.TextContent(type="text", text=json.dumps(create_result, indent=2))]
+
+
+async def _delete_script(
+    client: httpx.AsyncClient, args: dict
+) -> list[types.TextContent]:
+    script_id = args["script_id"]
+
+    response = await client.delete(f"{HA_URL}/api/config/script/config/{script_id}")
+    response.raise_for_status()
+
+    await client.post(f"{HA_URL}/api/services/script/reload")
+
+    return [types.TextContent(type="text", text=f"Script '{script_id}' deleted successfully.")]
+
+
+async def _create_helper(
+    client: httpx.AsyncClient, args: dict
+) -> list[types.TextContent]:
+    helper_type = args["helper_type"]
+    helper_id = args["helper_id"]
+    config = args["config"]
+
+    valid_types = {"input_boolean", "input_number", "input_text", "input_select", "input_datetime", "input_button"}
+    if helper_type not in valid_types:
+        return [types.TextContent(
+            type="text",
+            text=f"Invalid helper_type '{helper_type}'. Must be one of: {', '.join(sorted(valid_types))}",
+        )]
+
+    response = await client.post(f"{HA_URL}/api/config/{helper_type}/config/{helper_id}", json=config)
+    response.raise_for_status()
+    create_result = response.json()
+
+    await client.post(f"{HA_URL}/api/services/{helper_type}/reload")
+
+    return [types.TextContent(type="text", text=json.dumps(create_result, indent=2))]
 
 
 async def _call_service(

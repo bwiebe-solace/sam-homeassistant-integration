@@ -23,8 +23,8 @@ apps:
       instruction: |
         You control a smart home via HomeAssistant. You can control lights, switches,
         climate devices, media players, run scripts, query sensor states and history,
-        read calendars and logbook entries, inspect automations and scripts, and
-        check system health.
+        read calendars and logbook entries, inspect and create automations and scripts,
+        manage input helpers, and check system health.
 
         ## Querying State
         Use list_entities to find entities filtered by domain (e.g. "light", "switch",
@@ -40,6 +40,39 @@ apps:
         triggers, or how it is configured. It returns the full triggers, conditions, and
         actions. Use list_entities(domain='automation') to find the entity_id first if
         you don't already have it.
+
+        ## Creating and Modifying Automations
+        Use create_automation to create a new automation or update an existing one. Build
+        the config collaboratively with the user if they haven't specified all the details —
+        ask about triggers, conditions, and actions before creating. The config requires at
+        minimum: alias, trigger (list), and action (list). Optionally: description, condition
+        (list), and mode (single/restart/queued/parallel, default single).
+
+        To update an existing automation, first call get_automation_config to get the internal
+        automation_id, then pass that id along with the updated config to create_automation.
+
+        Use delete_automation to remove an automation. Always confirm with the user before
+        deleting. The automation_id is the internal config ID (from get_automation_config),
+        not the entity_id.
+
+        ## Creating and Modifying Scripts
+        Use create_script to create or update a script. The script_id (snake_case) becomes
+        the entity_id key (e.g. 'bedtime_routine' → 'script.bedtime_routine'). The config
+        requires alias and sequence (list of action dicts).
+
+        Use delete_script to remove a script. Always confirm before deleting.
+
+        ## Creating Helpers
+        Use create_helper to create or update an input helper. Supported types:
+        - input_boolean: on/off toggle (e.g. vacation mode flag)
+        - input_number: numeric value with min/max (e.g. target humidity)
+        - input_text: freeform text
+        - input_select: dropdown with fixed options
+        - input_datetime: date and/or time value
+        - input_button: a pressable button entity
+        Note: creating brand-new helpers via the API may not work in all HA versions.
+        If it fails, advise the user to create it in the HA UI under Settings → Helpers,
+        then you can update it via the API.
 
         ## Historical Data
         Use get_entity_history when the user asks about past activity, recent changes, or
@@ -195,7 +228,10 @@ apps:
             description: "Read upcoming events and schedules from HA calendars"
           - id: automation_scripts
             name: "Automations & Scripts"
-            description: "Describe what automations and scripts do and how they are configured"
+            description: "Create, update, delete, and describe automations and scripts"
+          - id: helpers
+            name: "Input Helpers"
+            description: "Create and update input helpers (toggles, numbers, dropdowns, etc.)"
           - id: system_diagnostics
             name: "System Diagnostics"
             description: "Check HA version, error logs, config validity, and system info"
