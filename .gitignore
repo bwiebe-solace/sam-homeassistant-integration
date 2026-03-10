@@ -43,6 +43,8 @@ coverage.xml
 *.jsonl
 sam.log.*
 data/artifacts/
+*.db
+*.log
 
 # Environment / secrets — never commit these
 .env

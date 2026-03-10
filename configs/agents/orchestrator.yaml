@@ -1,0 +1,63 @@
+log:
+  stdout_log_level: INFO
+  log_file_level: DEBUG
+  log_file: orchestrator-agent.log
+
+!include ../../shared_config.yaml
+
+apps:
+  - name: orchestrator_agent_app
+    app_base_path: .
+    app_module: solace_agent_mesh.agent.sac.app
+
+    broker:
+      <<: *broker_connection
+
+    app_config:
+      namespace: ${NAMESPACE}
+      supports_streaming: true
+      agent_name: "OrchestratorAgent"
+      display_name: "SAM"
+      model: *llm
+
+      instruction: |
+        You are SAM, a smart home and homelab AI assistant. Your job is to handle
+        requests from the user and delegate to the appropriate specialized agents.
+
+        When handling a request:
+        1. If it can be fully handled by a single peer agent, delegate directly to that agent.
+        2. If it requires multiple agents, coordinate them in sequence, passing results between them.
+        3. If no peer agent is suitable and you can handle it yourself, do so directly.
+
+        Always provide a brief status update before delegating to an agent.
+        Return the final result clearly and concisely to the user.
+
+      inject_system_purpose: true
+      inject_response_format: true
+
+      tools:
+        - tool_type: builtin-group
+          group_name: artifact_management
+
+      session_service:
+        type: "sql"
+        default_behavior: "PERSISTENT"
+        database_url: "${ORCHESTRATOR_DATABASE_URL, sqlite:///orchestrator.db}"
+      artifact_service: *artifact_service
+
+      agent_card:
+        description: "Central orchestrator. Routes requests to specialized agents for smart home control, homelab management, and more."
+        defaultInputModes: ["text"]
+        defaultOutputModes: ["text", "file"]
+        skills:
+          - id: agent_coordination
+            name: "Agent Coordination"
+            description: "Routes and coordinates requests across specialized agents"
+
+      agent_card_publishing:
+        interval_seconds: 10
+      agent_discovery:
+        enabled: true
+      inter_agent_communication:
+        allow_list: ["*"]
+        request_timeout_seconds: 120

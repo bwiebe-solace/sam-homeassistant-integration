@@ -18,8 +18,12 @@ apps:
       session_secret_key: "${SESSION_SECRET_KEY}"
       model: *llm
       artifact_service: *artifact_service
-      session_service: *session_service
+      session_service:
+        type: "sql"
+        default_behavior: "PERSISTENT"
+        database_url: "${WEB_UI_GATEWAY_DATABASE_URL, sqlite:///webui_gateway.db}"
       gateway_id: "sam-webui"
+      default_agent_name: "OrchestratorAgent"
       fastapi_host: "0.0.0.0"
       fastapi_port: ${WEBUI_PORT, 8000}
       cors_allowed_origins:
