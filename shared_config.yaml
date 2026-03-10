@@ -22,5 +22,5 @@ shared_config:
 
     artifact_service: &artifact_service
       type: "filesystem"
-      base_path: ${ARTIFACT_BASE_PATH, /tmp/sam-jarvis}
+      base_path: ${ARTIFACT_BASE_PATH, /tmp/sam-homeassistant}
       artifact_scope: namespace

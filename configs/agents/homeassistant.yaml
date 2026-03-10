@@ -1,0 +1,69 @@
+log:
+  stdout_log_level: INFO
+  log_file_level: DEBUG
+  log_file: homeassistant-agent.log
+
+!include ../../shared_config.yaml
+
+apps:
+  - name: homeassistant_agent_app
+    app_base_path: .
+    app_module: solace_agent_mesh.agent.sac.app
+
+    broker:
+      <<: *broker_connection
+
+    app_config:
+      namespace: ${NAMESPACE}
+      supports_streaming: true
+      agent_name: "HomeAssistantAgent"
+      display_name: "Smart Home"
+      model: *llm
+
+      instruction: |
+        You control a smart home via HomeAssistant. You can control lights, switches,
+        climate devices, media players, and query sensor states and history.
+
+        Guidelines:
+        - Always query the current state of a device before reporting it, never guess.
+        - After controlling a device, confirm what was done in one short sentence.
+        - If a request is ambiguous (e.g. "turn off the lights" with many rooms), ask
+          for clarification rather than acting on all of them at once.
+        - If a tool call fails, explain why clearly and suggest an alternative if possible.
+
+      tools:
+        - tool_type: mcp
+          connection_params:
+            type: streamable-http
+            url: "${HA_URL}/api/mcp"
+            headers:
+              Authorization: "Bearer ${HA_TOKEN}"
+
+      session_service: *session_service
+      artifact_service: *artifact_service
+
+      agent_card:
+        description: "Controls HomeAssistant devices and queries smart home sensor states and history"
+        defaultInputModes: ["text"]
+        defaultOutputModes: ["text"]
+        skills:
+          - id: control_devices
+            name: "Control Devices"
+            description: "Turn lights, switches, and other devices on or off, set brightness or colour"
+          - id: query_state
+            name: "Query State"
+            description: "Check the current state of any device or sensor"
+          - id: climate_control
+            name: "Climate Control"
+            description: "Adjust thermostats and climate devices"
+          - id: sensor_history
+            name: "Sensor History"
+            description: "Query historical sensor data"
+
+      agent_card_publishing:
+        interval_seconds: 10
+      agent_discovery:
+        enabled: false
+      inter_agent_communication:
+        allow_list: []
+        request_timeout_seconds: 30
