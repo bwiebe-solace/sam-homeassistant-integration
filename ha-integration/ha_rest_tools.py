@@ -7,6 +7,8 @@ which always dumps all entities (~19KB+) regardless of what is needed.
 Tools:
   - list_entities: Filter entities by domain and/or state via POST /api/template
   - get_entity_state: Get a single entity's full state via GET /api/states/{entity_id}
+  - get_entity_history: Get historical states for an entity via GET /api/history/period
+  - get_automation_config: Get an automation's full config (triggers, conditions, actions)
   - call_service: Call any HA service via POST /api/services/{domain}/{service}
 """
 
@@ -14,6 +16,7 @@ import asyncio
 import json
 import os
 import sys
+from datetime import datetime, timedelta, timezone
 
 import httpx
 from mcp.server import Server
@@ -37,11 +40,12 @@ async def list_tools() -> list[types.Tool]:
         types.Tool(
             name="list_entities",
             description=(
-                "List HomeAssistant entities filtered by domain and/or state. "
-                "Returns entity IDs, friendly names, and current states. "
-                "Use this instead of GetLiveContext when you need entities "
-                "from a specific domain (e.g. light, switch, sensor) or with "
-                "a specific state (e.g. on, off)."
+                "List HomeAssistant entities filtered by domain, state, and/or name keyword. "
+                "Returns entity IDs, friendly names, current states, domain, device_class, and is_group. "
+                "Use name_filter to discover entities by keyword when you don't know the entity_id "
+                "(e.g. name_filter='garbage' or name_filter='bin' to find waste collection entities, "
+                "name_filter='thermostat' to find climate controls). "
+                "Use this instead of GetLiveContext for all state queries."
             ),
             inputSchema={
                 "type": "object",
@@ -58,6 +62,15 @@ async def list_tools() -> list[types.Tool]:
                         "description": (
                             "State value to filter by, e.g. 'on', 'off', 'playing', 'idle'. "
                             "Omit to include all states."
+                        ),
+                    },
+                    "name_filter": {
+                        "type": "string",
+                        "description": (
+                            "Case-insensitive keyword to match against entity names and entity IDs. "
+                            "Use this to discover entities for a topic when you don't know the exact "
+                            "entity_id (e.g. 'garbage', 'bin', 'recycling', 'front door', 'basement'). "
+                            "Can be combined with domain and state."
                         ),
                     },
                 },
@@ -78,6 +91,55 @@ async def list_tools() -> list[types.Tool]:
                         "type": "string",
                         "description": "The entity ID, e.g. 'light.living_room' or 'sensor.temperature'.",
                     }
+                },
+                "required": ["entity_id"],
+                "additionalProperties": False,
+            },
+        ),
+        types.Tool(
+            name="get_entity_history",
+            description=(
+                "Get the historical state changes for a HomeAssistant entity over a time window. "
+                "Use this to answer questions about recent activity: whether an appliance ran, "
+                "when a sensor last changed, how a value trended over time, etc. "
+                "Returns a list of state entries with timestamps, each showing the value at that time. "
+                "Only significant state changes are returned by default (not every poll)."
+            ),
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "entity_id": {
+                        "type": "string",
+                        "description": "The entity ID to retrieve history for, e.g. 'sensor.laundry_vibration_sensor_x_axis'.",
+                    },
+                    "hours_ago": {
+                        "type": "number",
+                        "description": "How many hours back to retrieve history for. Defaults to 24. Use a larger value for longer lookback.",
+                    },
+                    "significant_changes_only": {
+                        "type": "boolean",
+                        "description": "If true (default), only return entries where the state value actually changed. Set to false to see every recorded data point.",
+                    },
+                },
+                "required": ["entity_id"],
+                "additionalProperties": False,
+            },
+        ),
+        types.Tool(
+            name="get_automation_config",
+            description=(
+                "Get the full internal configuration of a HomeAssistant automation: "
+                "its triggers, conditions, and actions. Use this when the user asks "
+                "what an automation does, when it runs, or how it is configured. "
+                "Provide the automation's entity_id (e.g. 'automation.morning_lights')."
+            ),
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "entity_id": {
+                        "type": "string",
+                        "description": "The automation entity ID, e.g. 'automation.morning_lights'.",
+                    },
                 },
                 "required": ["entity_id"],
                 "additionalProperties": False,
@@ -131,6 +193,10 @@ async def call_tool(name: str, arguments: dict) -> list[types.TextContent]:
             return await _list_entities(client, arguments)
         elif name == "get_entity_state":
             return await _get_entity_state(client, arguments)
+        elif name == "get_entity_history":
+            return await _get_entity_history(client, arguments)
+        elif name == "get_automation_config":
+            return await _get_automation_config(client, arguments)
         elif name == "call_service":
             return await _call_service(client, arguments)
         else:
@@ -142,39 +208,40 @@ async def _list_entities(
 ) -> list[types.TextContent]:
     domain = args.get("domain")
     state_filter = args.get("state")
+    name_filter = args.get("name_filter")
 
-    if domain and state_filter:
-        template = (
-            f"{{% set ns = namespace(items=[]) %}}"
-            f"{{% for s in states.{domain} %}}"
-            f"{{% if s.state == '{state_filter}' %}}"
-            f"{{% set ns.items = ns.items + [dict(entity_id=s.entity_id, name=s.name, state=s.state, attributes=s.attributes)] %}}"
-            f"{{% endif %}}"
-            f"{{% endfor %}}"
-            f"{{{{ ns.items | tojson }}}}"
-        )
-    elif domain:
-        template = (
-            f"{{{{ states.{domain} | map(attribute='as_dict') | list | tojson }}}}"
-        )
-    elif state_filter:
-        template = (
-            f"{{% set ns = namespace(items=[]) %}}"
-            f"{{% for s in states %}}"
-            f"{{% if s.state == '{state_filter}' %}}"
-            f"{{% set ns.items = ns.items + [dict(entity_id=s.entity_id, name=s.name, state=s.state)] %}}"
-            f"{{% endif %}}"
-            f"{{% endfor %}}"
-            f"{{{{ ns.items | tojson }}}}"
-        )
+    if domain and not state_filter and not name_filter:
+        template = "{{ states." + domain + " | map(attribute='as_dict') | list | tojson }}"
     else:
-        template = (
-            "{% set ns = namespace(items=[]) %}"
-            "{% for s in states %}"
-            "{% set ns.items = ns.items + [dict(entity_id=s.entity_id, name=s.name, state=s.state)] %}"
-            "{% endfor %}"
-            "{{ ns.items | tojson }}"
-        )
+        loop_src = ("states." + domain) if domain else "states"
+
+        conditions = []
+        if state_filter:
+            conditions.append("s.state == '" + state_filter + "'")
+        if name_filter:
+            kw = name_filter.lower().replace("'", "").replace("{", "").replace("}", "")
+            conditions.append(
+                "('" + kw + "' in (s.name | lower) or '" + kw + "' in (s.entity_id | lower))"
+            )
+
+        parts = [
+            "{% set ns = namespace(items=[]) %}",
+            "{% for s in " + loop_src + " %}",
+        ]
+        if conditions:
+            parts.append("{% if " + " and ".join(conditions) + " %}")
+        parts += [
+            "{% set dc = s.attributes.get('device_class', none) %}",
+            "{% set is_grp = s.attributes.get('entity_id') is not none %}",
+            "{% set ns.items = ns.items + [dict(entity_id=s.entity_id, name=s.name, state=s.state, domain=s.domain, device_class=dc, is_group=is_grp)] %}",
+        ]
+        if conditions:
+            parts.append("{% endif %}")
+        parts += [
+            "{% endfor %}",
+            "{{ ns.items | tojson }}",
+        ]
+        template = "".join(parts)
 
     response = await client.post(
         f"{HA_URL}/api/template",
@@ -199,6 +266,59 @@ async def _get_entity_state(
     response = await client.get(f"{HA_URL}/api/states/{entity_id}")
     response.raise_for_status()
     result = json.dumps(response.json(), indent=2)
+    return [types.TextContent(type="text", text=result)]
+
+
+async def _get_entity_history(
+    client: httpx.AsyncClient, args: dict
+) -> list[types.TextContent]:
+    entity_id = args["entity_id"]
+    hours_ago = args.get("hours_ago", 24)
+    significant_only = args.get("significant_changes_only", True)
+
+    start_time = datetime.now(timezone.utc) - timedelta(hours=hours_ago)
+    start_str = start_time.isoformat()
+
+    params = {
+        "filter_entity_id": entity_id,
+        "minimal_response": "true",
+    }
+    if significant_only:
+        params["significant_changes_only"] = "true"
+
+    response = await client.get(
+        f"{HA_URL}/api/history/period/{start_str}",
+        params=params,
+    )
+    response.raise_for_status()
+
+    data = response.json()
+    # API returns a list of lists (one per entity); flatten to the entity's list
+    history = data[0] if data else []
+    result = json.dumps(history, indent=2)
+    return [types.TextContent(type="text", text=result)]
+
+
+async def _get_automation_config(
+    client: httpx.AsyncClient, args: dict
+) -> list[types.TextContent]:
+    entity_id = args["entity_id"]
+
+    state_response = await client.get(f"{HA_URL}/api/states/{entity_id}")
+    state_response.raise_for_status()
+    state = state_response.json()
+
+    automation_id = state.get("attributes", {}).get("id")
+    if not automation_id:
+        return [types.TextContent(
+            type="text",
+            text=f"Could not find internal config ID for {entity_id}. "
+                 f"Available attributes: {json.dumps(state.get('attributes', {}), indent=2)}",
+        )]
+
+    config_response = await client.get(f"{HA_URL}/api/config/automation/config/{automation_id}")
+    config_response.raise_for_status()
+    result = json.dumps(config_response.json(), indent=2)
     return [types.TextContent(type="text", text=result)]
 
 
