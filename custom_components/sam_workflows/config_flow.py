@@ -12,6 +12,7 @@ STEP_USER_SCHEMA = vol.Schema(
         vol.Optional("timeout_seconds", default=30): vol.All(
             int, vol.Range(min=5, max=120)
         ),
+        vol.Optional("sam_url", default=""): str,
     }
 )
 

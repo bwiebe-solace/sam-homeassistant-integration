@@ -1,7 +1,7 @@
 {
   "domain": "sam_workflows",
   "name": "SAM Workflows",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "documentation": "https://github.com/bwiebe-solace/sam-homeassistant-integration",
   "issue_tracker": "https://github.com/bwiebe-solace/sam-homeassistant-integration/issues",
   "codeowners": ["@bwiebe-solace"],

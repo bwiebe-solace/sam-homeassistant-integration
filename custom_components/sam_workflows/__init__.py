@@ -21,7 +21,8 @@ from homeassistant.core import HomeAssistant, ServiceCall
 _LOGGER = logging.getLogger(__name__)
 
 DOMAIN = "sam_workflows"
-PLATFORMS = ["conversation"]
+_ALWAYS_PLATFORMS = ["conversation"]
+_SPEECH_PLATFORMS = ["tts", "stt"]
 
 # SAM agent card extension URIs
 _EXT_AGENT_TYPE = "https://solace.com/a2a/extensions/agent-type"
@@ -210,15 +211,22 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         ),
     )
 
-    # --- Conversation platform ---
-    await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
+    # --- Platform setup ---
+    platforms = list(_ALWAYS_PLATFORMS)
+    if entry.data.get("sam_url"):
+        platforms.extend(_SPEECH_PLATFORMS)
+    await hass.config_entries.async_forward_entry_setups(entry, platforms)
+    hass.data[DOMAIN][entry.entry_id]["platforms"] = platforms
 
     return True
 
 
 async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     """Unload a config entry."""
-    unloaded = await hass.config_entries.async_unload_platforms(entry, PLATFORMS)
+    platforms = hass.data[DOMAIN].get(entry.entry_id, {}).get(
+        "platforms", _ALWAYS_PLATFORMS
+    )
+    unloaded = await hass.config_entries.async_unload_platforms(entry, platforms)
     if unloaded:
         entry_data = hass.data[DOMAIN].pop(entry.entry_id, {})
         for unsub in entry_data.get("unsubscribers", []):

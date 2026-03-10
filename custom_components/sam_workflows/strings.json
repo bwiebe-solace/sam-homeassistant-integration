@@ -3,10 +3,11 @@
     "step": {
       "user": {
         "title": "Connect to SAM",
-        "description": "Configure the connection to your Solace Agent Mesh instance.",
+        "description": "Configure the connection to your Solace Agent Mesh instance. The SAM Web UI URL is only needed if you want to use SAM as your TTS/STT provider.",
         "data": {
           "namespace": "SAM Namespace",
-          "timeout_seconds": "Response timeout (seconds)"
+          "timeout_seconds": "Conversation response timeout (seconds)",
+          "sam_url": "SAM Web UI URL (optional, for TTS/STT — e.g. http://localhost:8000)"
         }
       }
     },
