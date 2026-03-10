@@ -44,12 +44,61 @@ _HEADERS = {
     "Content-Type": "application/json",
 }
 
+# ── Permission flags (read once at startup from env) ──────────────────────────
+_READONLY = os.environ.get("HA_READONLY", "false").lower() == "true"
+_ALLOW_DEVICE_CONTROL = (
+    not _READONLY
+    and os.environ.get("HA_ALLOW_DEVICE_CONTROL", "true").lower() == "true"
+)
+_ALLOW_SCRIPT_EXECUTION = (
+    _ALLOW_DEVICE_CONTROL
+    and os.environ.get("HA_ALLOW_SCRIPT_EXECUTION", "true").lower() == "true"
+)
+_ALLOW_CONFIG_WRITE = (
+    not _READONLY
+    and os.environ.get("HA_ALLOW_CONFIG_WRITE", "false").lower() == "true"
+)
+_ALLOW_DELETES = (
+    not _READONLY
+    and os.environ.get("HA_ALLOW_DELETES", "false").lower() == "true"
+)
+
+_ENABLED_TOOLS: frozenset[str] = frozenset(
+    {
+        # Read tools — always available
+        "list_entities", "get_entity_state", "get_entity_history",
+        "get_automation_config", "get_script_config", "get_logbook",
+        "get_calendar_events", "list_services", "get_system_info",
+        "get_error_log", "get_camera_snapshot_url", "check_config",
+    }
+    | ({"call_service"} if _ALLOW_DEVICE_CONTROL else set())
+    | ({"create_automation", "create_script", "create_helper"} if _ALLOW_CONFIG_WRITE else set())
+    | ({"delete_automation", "delete_script"} if _ALLOW_DELETES else set())
+)
+
+_SCRIPT_DOMAINS = {"script", "automation"}
+
+
+def _check_permission(name: str, arguments: dict) -> str | None:
+    """Return an error string if the call is not permitted, else None."""
+    if name not in _ENABLED_TOOLS:
+        return f"'{name}' is disabled by the deployment configuration."
+    if name == "call_service" and not _ALLOW_SCRIPT_EXECUTION:
+        if arguments.get("domain") in _SCRIPT_DOMAINS:
+            return (
+                f"Triggering '{arguments.get('domain')}' services is disabled "
+                "by the deployment configuration."
+            )
+    return None
+
+# ─────────────────────────────────────────────────────────────────────────────
+
 server = Server("ha-rest-tools")
 
 
 @server.list_tools()
 async def list_tools() -> list[types.Tool]:
-    return [
+    all_tools = [
         types.Tool(
             name="list_entities",
             description=(
@@ -493,10 +542,15 @@ async def list_tools() -> list[types.Tool]:
             },
         ),
     ]
+    return [t for t in all_tools if t.name in _ENABLED_TOOLS]
 
 
 @server.call_tool()
 async def call_tool(name: str, arguments: dict) -> list[types.TextContent]:
+    error = _check_permission(name, arguments)
+    if error:
+        return [types.TextContent(type="text", text=error)]
+
     async with httpx.AsyncClient(headers=_HEADERS, timeout=15) as client:
         if name == "list_entities":
             return await _list_entities(client, arguments)

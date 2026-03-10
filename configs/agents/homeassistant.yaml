@@ -183,6 +183,9 @@ apps:
         - If a request is ambiguous (e.g. "turn off the lights" with many rooms), ask
           for clarification rather than acting on all of them at once.
         - If a tool call fails, explain why and suggest an alternative if possible.
+        - Some tools may be disabled by the deployment configuration. If a capability
+          the user requests is not available, say so clearly and do not attempt to
+          work around the restriction.
 
       tools:
         - tool_type: builtin-group
@@ -196,6 +199,11 @@ apps:
           environment_variables:
             HA_URL: "${HA_URL}"
             HA_TOKEN: "${HA_TOKEN}"
+            HA_READONLY: "${HA_READONLY, false}"
+            HA_ALLOW_DEVICE_CONTROL: "${HA_ALLOW_DEVICE_CONTROL, true}"
+            HA_ALLOW_SCRIPT_EXECUTION: "${HA_ALLOW_SCRIPT_EXECUTION, true}"
+            HA_ALLOW_CONFIG_WRITE: "${HA_ALLOW_CONFIG_WRITE, false}"
+            HA_ALLOW_DELETES: "${HA_ALLOW_DELETES, false}"
         - tool_type: mcp
           connection_params:
             type: streamable-http
