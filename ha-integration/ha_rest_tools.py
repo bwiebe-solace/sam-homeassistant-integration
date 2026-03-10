@@ -1,5 +1,5 @@
 """
-Custom MCP stdio server providing filtered HomeAssistant state queries.
+Custom MCP stdio server providing filtered HomeAssistant state queries and device control.
 
 Uses HA REST API directly instead of the built-in MCP server's GetLiveContext,
 which always dumps all entities (~19KB+) regardless of what is needed.
@@ -7,6 +7,7 @@ which always dumps all entities (~19KB+) regardless of what is needed.
 Tools:
   - list_entities: Filter entities by domain and/or state via POST /api/template
   - get_entity_state: Get a single entity's full state via GET /api/states/{entity_id}
+  - call_service: Call any HA service via POST /api/services/{domain}/{service}
 """
 
 import asyncio
@@ -82,6 +83,44 @@ async def list_tools() -> list[types.Tool]:
                 "additionalProperties": False,
             },
         ),
+        types.Tool(
+            name="call_service",
+            description=(
+                "Call a HomeAssistant service to control any device. "
+                "Works for ALL entities regardless of voice-assistant exposure settings. "
+                "Use list_entities first to find the entity_id, then call the service.\n"
+                "Common examples:\n"
+                "  Turn off light:    domain='light',   service='turn_off',          entity_id='light.coffee_bar_light'\n"
+                "  Turn on light:     domain='light',   service='turn_on',           entity_id='light.living_room'\n"
+                "  Set brightness:    domain='light',   service='turn_on',           entity_id='light.xxx', brightness_pct=80\n"
+                "  Set color temp:    domain='light',   service='turn_on',           entity_id='light.xxx', color_temp=300\n"
+                "  Toggle switch:     domain='switch',  service='toggle',            entity_id='switch.xxx'\n"
+                "  Set thermostat:    domain='climate', service='set_temperature',   entity_id='climate.xxx', temperature=21, hvac_mode='heat'\n"
+                "  Pause media:       domain='media_player', service='media_pause',  entity_id='media_player.xxx'\n"
+                "  Set volume:        domain='media_player', service='volume_set',   entity_id='media_player.xxx', volume_level=0.5\n"
+                "  Run script:        domain='script',  service='turn_on',           entity_id='script.xxx'\n"
+                "  Trigger automation: domain='automation', service='trigger',       entity_id='automation.xxx'"
+            ),
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "domain": {
+                        "type": "string",
+                        "description": "Service domain, e.g. 'light', 'switch', 'climate', 'media_player', 'script', 'automation'.",
+                    },
+                    "service": {
+                        "type": "string",
+                        "description": "Service name, e.g. 'turn_on', 'turn_off', 'toggle', 'set_temperature', 'media_pause'.",
+                    },
+                    "entity_id": {
+                        "type": "string",
+                        "description": "Target entity ID, e.g. 'light.coffee_bar_light'. Use list_entities to find this if unknown.",
+                    },
+                },
+                "required": ["domain", "service", "entity_id"],
+                "additionalProperties": True,
+            },
+        ),
     ]
 
 
@@ -92,6 +131,8 @@ async def call_tool(name: str, arguments: dict) -> list[types.TextContent]:
             return await _list_entities(client, arguments)
         elif name == "get_entity_state":
             return await _get_entity_state(client, arguments)
+        elif name == "call_service":
+            return await _call_service(client, arguments)
         else:
             raise ValueError(f"Unknown tool: {name}")
 
@@ -158,6 +199,21 @@ async def _get_entity_state(
     response = await client.get(f"{HA_URL}/api/states/{entity_id}")
     response.raise_for_status()
     result = json.dumps(response.json(), indent=2)
+    return [types.TextContent(type="text", text=result)]
+
+
+async def _call_service(
+    client: httpx.AsyncClient, args: dict
+) -> list[types.TextContent]:
+    domain = args.pop("domain")
+    service = args.pop("service")
+    response = await client.post(
+        f"{HA_URL}/api/services/{domain}/{service}",
+        json=args,
+    )
+    response.raise_for_status()
+    body = response.text.strip()
+    result = json.dumps(response.json(), indent=2) if body else "Service called successfully."
     return [types.TextContent(type="text", text=result)]
 
 
