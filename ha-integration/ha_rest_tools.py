@@ -5,11 +5,19 @@ Uses HA REST API directly instead of the built-in MCP server's GetLiveContext,
 which always dumps all entities (~19KB+) regardless of what is needed.
 
 Tools:
-  - list_entities: Filter entities by domain and/or state via POST /api/template
-  - get_entity_state: Get a single entity's full state via GET /api/states/{entity_id}
-  - get_entity_history: Get historical states for an entity via GET /api/history/period
-  - get_automation_config: Get an automation's full config (triggers, conditions, actions)
-  - call_service: Call any HA service via POST /api/services/{domain}/{service}
+  - list_entities:            Filter entities by domain/state/name via POST /api/template
+  - get_entity_state:         Full state+attributes for one entity via GET /api/states/{id}
+  - get_entity_history:       Historical state changes via GET /api/history/period
+  - get_automation_config:    Automation triggers/conditions/actions via /api/config/automation/config
+  - get_script_config:        Script action sequence via /api/config/script/config
+  - get_logbook:              Human-readable activity log via GET /api/logbook
+  - get_calendar_events:      Calendar events via GET /api/calendars
+  - list_services:            Available service domains and parameters via GET /api/services
+  - get_system_info:          HA version, timezone, location via GET /api/config
+  - get_error_log:            Recent HA error log via GET /api/error_log
+  - get_camera_snapshot_url:  Viewable snapshot URL for a camera entity
+  - check_config:             Validate configuration.yaml via POST /api/config/core/check_config
+  - call_service:             Call any HA service via POST /api/services/{domain}/{service}
 """
 
 import asyncio
@@ -146,6 +154,161 @@ async def list_tools() -> list[types.Tool]:
             },
         ),
         types.Tool(
+            name="get_script_config",
+            description=(
+                "Get the full action sequence of a HomeAssistant script. "
+                "Use this when the user asks what a script does or how it is configured. "
+                "Provide the script's entity_id (e.g. 'script.bedtime_routine'). "
+                "Use list_entities(domain='script') to find the entity_id if unknown."
+            ),
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "entity_id": {
+                        "type": "string",
+                        "description": "The script entity ID, e.g. 'script.bedtime_routine'.",
+                    },
+                },
+                "required": ["entity_id"],
+                "additionalProperties": False,
+            },
+        ),
+        types.Tool(
+            name="get_logbook",
+            description=(
+                "Get human-readable logbook entries describing what happened in the home: "
+                "device state changes, automation triggers, script runs, etc. "
+                "Use this to answer questions like 'when did the front door last open?', "
+                "'what triggered the hallway light?', 'what happened at 2am?'. "
+                "Filter to a specific entity with entity_id, or omit for a broad overview."
+            ),
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "entity_id": {
+                        "type": "string",
+                        "description": "Optional entity ID to narrow logbook entries to one entity.",
+                    },
+                    "hours_ago": {
+                        "type": "number",
+                        "description": "How many hours back to query. Defaults to 24.",
+                    },
+                },
+                "additionalProperties": False,
+            },
+        ),
+        types.Tool(
+            name="get_calendar_events",
+            description=(
+                "Get upcoming events from a HomeAssistant calendar entity. "
+                "Use this for questions about schedules, reminders, or upcoming events "
+                "('what's on my calendar this week?', 'when is bin collection?', 'any events today?'). "
+                "Omit calendar_entity_id to list all available calendars first."
+            ),
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "calendar_entity_id": {
+                        "type": "string",
+                        "description": (
+                            "Calendar entity ID, e.g. 'calendar.home'. "
+                            "Omit to list all available calendars."
+                        ),
+                    },
+                    "days_ahead": {
+                        "type": "number",
+                        "description": "Number of days ahead to query. Defaults to 7.",
+                    },
+                },
+                "additionalProperties": False,
+            },
+        ),
+        types.Tool(
+            name="list_services",
+            description=(
+                "List available HomeAssistant service domains and their services, including "
+                "accepted parameters. Use this when you need to know what services are available "
+                "for a domain, or what parameters a service accepts before calling it. "
+                "Provide domain to limit results (e.g. 'climate'), or omit to see all domains."
+            ),
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "domain": {
+                        "type": "string",
+                        "description": "Service domain to filter by, e.g. 'light', 'climate'. Omit to list all domains.",
+                    },
+                },
+                "additionalProperties": False,
+            },
+        ),
+        types.Tool(
+            name="get_system_info",
+            description=(
+                "Get HomeAssistant system information: version, home name, timezone, "
+                "location coordinates, unit system (metric/imperial), and loaded integrations. "
+                "Use this for questions like 'what version of HA is running?', "
+                "'what timezone is the house in?', 'where is the house located?'."
+            ),
+            inputSchema={
+                "type": "object",
+                "properties": {},
+                "additionalProperties": False,
+            },
+        ),
+        types.Tool(
+            name="get_error_log",
+            description=(
+                "Get recent entries from the HomeAssistant error log. "
+                "Use this when the user asks about errors, failures, or unexpected behaviour — "
+                "e.g. 'why did that automation fail?', 'are there any HA errors?'. "
+                "Increase tail_lines if the problem may have occurred earlier in the session."
+            ),
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "tail_lines": {
+                        "type": "number",
+                        "description": "Number of lines to return from the end of the log. Defaults to 50.",
+                    },
+                },
+                "additionalProperties": False,
+            },
+        ),
+        types.Tool(
+            name="get_camera_snapshot_url",
+            description=(
+                "Get a viewable snapshot URL for a HomeAssistant camera entity. "
+                "Returns a URL the user can open in their browser to see the current camera image. "
+                "Use list_entities(domain='camera') to find camera entity IDs if unknown."
+            ),
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "camera_entity_id": {
+                        "type": "string",
+                        "description": "Camera entity ID, e.g. 'camera.front_door'.",
+                    },
+                },
+                "required": ["camera_entity_id"],
+                "additionalProperties": False,
+            },
+        ),
+        types.Tool(
+            name="check_config",
+            description=(
+                "Validate the HomeAssistant configuration.yaml. "
+                "Returns 'valid' or 'invalid' with any error details. "
+                "Use this when the user asks if their config is valid, or after they report "
+                "that HA restarted with errors."
+            ),
+            inputSchema={
+                "type": "object",
+                "properties": {},
+                "additionalProperties": False,
+            },
+        ),
+        types.Tool(
             name="call_service",
             description=(
                 "Call a HomeAssistant service to control any device. "
@@ -197,6 +360,22 @@ async def call_tool(name: str, arguments: dict) -> list[types.TextContent]:
             return await _get_entity_history(client, arguments)
         elif name == "get_automation_config":
             return await _get_automation_config(client, arguments)
+        elif name == "get_script_config":
+            return await _get_script_config(client, arguments)
+        elif name == "get_logbook":
+            return await _get_logbook(client, arguments)
+        elif name == "get_calendar_events":
+            return await _get_calendar_events(client, arguments)
+        elif name == "list_services":
+            return await _list_services(client, arguments)
+        elif name == "get_system_info":
+            return await _get_system_info(client, arguments)
+        elif name == "get_error_log":
+            return await _get_error_log(client, arguments)
+        elif name == "get_camera_snapshot_url":
+            return await _get_camera_snapshot_url(client, arguments)
+        elif name == "check_config":
+            return await _check_config(client, arguments)
         elif name == "call_service":
             return await _call_service(client, arguments)
         else:
@@ -319,6 +498,142 @@ async def _get_automation_config(
     config_response = await client.get(f"{HA_URL}/api/config/automation/config/{automation_id}")
     config_response.raise_for_status()
     result = json.dumps(config_response.json(), indent=2)
+    return [types.TextContent(type="text", text=result)]
+
+
+async def _get_script_config(
+    client: httpx.AsyncClient, args: dict
+) -> list[types.TextContent]:
+    entity_id = args["entity_id"]
+
+    state_response = await client.get(f"{HA_URL}/api/states/{entity_id}")
+    state_response.raise_for_status()
+    state = state_response.json()
+
+    script_id = state.get("attributes", {}).get("id")
+    if not script_id:
+        return [types.TextContent(
+            type="text",
+            text=f"Could not find internal config ID for {entity_id}. "
+                 f"Available attributes: {json.dumps(state.get('attributes', {}), indent=2)}",
+        )]
+
+    config_response = await client.get(f"{HA_URL}/api/config/script/config/{script_id}")
+    config_response.raise_for_status()
+    result = json.dumps(config_response.json(), indent=2)
+    return [types.TextContent(type="text", text=result)]
+
+
+async def _get_logbook(
+    client: httpx.AsyncClient, args: dict
+) -> list[types.TextContent]:
+    entity_id = args.get("entity_id")
+    hours_ago = args.get("hours_ago", 24)
+
+    start = datetime.now(timezone.utc) - timedelta(hours=hours_ago)
+    end = datetime.now(timezone.utc)
+
+    params = {"end_time": end.isoformat()}
+    if entity_id:
+        params["entity_id"] = entity_id
+
+    response = await client.get(
+        f"{HA_URL}/api/logbook/{start.isoformat()}",
+        params=params,
+    )
+    response.raise_for_status()
+    result = json.dumps(response.json(), indent=2)
+    return [types.TextContent(type="text", text=result)]
+
+
+async def _get_calendar_events(
+    client: httpx.AsyncClient, args: dict
+) -> list[types.TextContent]:
+    calendar_entity_id = args.get("calendar_entity_id")
+    days_ahead = args.get("days_ahead", 7)
+
+    if not calendar_entity_id:
+        response = await client.get(f"{HA_URL}/api/calendars")
+        response.raise_for_status()
+        return [types.TextContent(type="text", text=json.dumps(response.json(), indent=2))]
+
+    start = datetime.now(timezone.utc)
+    end = start + timedelta(days=days_ahead)
+
+    response = await client.get(
+        f"{HA_URL}/api/calendars/{calendar_entity_id}",
+        params={"start": start.isoformat(), "end": end.isoformat()},
+    )
+    response.raise_for_status()
+    result = json.dumps(response.json(), indent=2)
+    return [types.TextContent(type="text", text=result)]
+
+
+async def _list_services(
+    client: httpx.AsyncClient, args: dict
+) -> list[types.TextContent]:
+    domain = args.get("domain")
+
+    response = await client.get(f"{HA_URL}/api/services")
+    response.raise_for_status()
+    data = response.json()
+
+    if domain:
+        data = [entry for entry in data if entry.get("domain") == domain]
+
+    result = json.dumps(data, indent=2)
+    return [types.TextContent(type="text", text=result)]
+
+
+async def _get_system_info(
+    client: httpx.AsyncClient, args: dict
+) -> list[types.TextContent]:
+    response = await client.get(f"{HA_URL}/api/config")
+    response.raise_for_status()
+    result = json.dumps(response.json(), indent=2)
+    return [types.TextContent(type="text", text=result)]
+
+
+async def _get_error_log(
+    client: httpx.AsyncClient, args: dict
+) -> list[types.TextContent]:
+    tail_lines = int(args.get("tail_lines", 50))
+
+    response = await client.get(f"{HA_URL}/api/error_log")
+    response.raise_for_status()
+
+    lines = response.text.splitlines()
+    tail = "\n".join(lines[-tail_lines:]) if len(lines) > tail_lines else response.text
+    return [types.TextContent(type="text", text=tail)]
+
+
+async def _get_camera_snapshot_url(
+    client: httpx.AsyncClient, args: dict
+) -> list[types.TextContent]:
+    camera_entity_id = args["camera_entity_id"]
+
+    state_response = await client.get(f"{HA_URL}/api/states/{camera_entity_id}")
+    state_response.raise_for_status()
+    state = state_response.json()
+
+    access_token = state.get("attributes", {}).get("access_token")
+    if access_token:
+        url = f"{HA_URL}/api/camera_proxy/{camera_entity_id}?token={access_token}"
+    else:
+        url = f"{HA_URL}/api/camera_proxy/{camera_entity_id}"
+
+    return [types.TextContent(
+        type="text",
+        text=f"Camera snapshot URL (open in browser): {url}\nCurrent state: {state.get('state')}",
+    )]
+
+
+async def _check_config(
+    client: httpx.AsyncClient, args: dict
+) -> list[types.TextContent]:
+    response = await client.post(f"{HA_URL}/api/config/core/check_config")
+    response.raise_for_status()
+    result = json.dumps(response.json(), indent=2)
     return [types.TextContent(type="text", text=result)]
 
 

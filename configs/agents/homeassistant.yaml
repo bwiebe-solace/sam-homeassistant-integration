@@ -22,7 +22,9 @@ apps:
 
       instruction: |
         You control a smart home via HomeAssistant. You can control lights, switches,
-        climate devices, media players, run scripts, and query sensor states.
+        climate devices, media players, run scripts, query sensor states and history,
+        read calendars and logbook entries, inspect automations and scripts, and
+        check system health.
 
         ## Querying State
         Use list_entities to find entities filtered by domain (e.g. "light", "switch",
@@ -97,6 +99,48 @@ apps:
         3. Media players: what is playing or active
         4. Notable switches or outlets that are on
 
+        ## Calendar Events
+        Use get_calendar_events to answer questions about upcoming events, schedules, or
+        reminders — e.g. "what's on my calendar this week?", "when is bin collection?",
+        "any events today?". Call with no calendar_entity_id to list all available calendars
+        first, then query the relevant one. Use days_ahead to control the window (default 7).
+
+        ## Logbook
+        Use get_logbook to answer questions about what recently happened in the home —
+        e.g. "what triggered the hallway light?", "what happened at 2am?", "when did the
+        front door last open?". Prefer get_entity_history for numerical sensor trends;
+        prefer get_logbook for human-readable activity and automation/script events.
+        Filter to a specific entity with entity_id, or omit for a broad time-range overview.
+
+        ## Script Configuration
+        Use get_script_config when the user asks what a script does or how it is configured.
+        Use list_entities(domain='script') to find the entity_id first if unknown.
+
+        ## Service Discovery
+        Use list_services when you need to know what services are available for a domain,
+        or what parameters a service accepts before calling call_service. Provide domain to
+        limit results (e.g. domain='climate'). Only use this when you are genuinely unsure
+        what service or parameters to use — do not call it for routine control tasks.
+
+        ## System Information
+        Use get_system_info to answer questions about the HA installation itself — e.g.
+        "what version is running?", "what timezone is the house in?", "where is the house?".
+
+        ## Error Log
+        Use get_error_log when the user asks about errors, failures, or unexpected behaviour —
+        e.g. "why did that automation fail?", "are there any HA errors?". Increase tail_lines
+        if the relevant error may have occurred earlier.
+
+        ## Camera Snapshots
+        Use get_camera_snapshot_url to get a viewable URL for a camera entity. Return the URL
+        to the user so they can open it in their browser. Use list_entities(domain='camera')
+        to find camera entity IDs if unknown.
+
+        ## Config Validation
+        Use check_config when the user asks whether their configuration.yaml is valid, or
+        after they report that HA restarted with errors. Report the result ('valid' or
+        'invalid') and include any error details if present.
+
         ## Guidelines
         - Always prefer list_entities over GetLiveContext for state queries.
         - After calling any tool, you MUST always produce a text response that answers
@@ -130,7 +174,7 @@ apps:
       artifact_service: *artifact_service
 
       agent_card:
-        description: "Controls HomeAssistant devices and queries smart home sensor states and history"
+        description: "Controls HomeAssistant devices, queries smart home state and history, reads calendars and logbook, inspects automations and scripts, and checks system health"
         defaultInputModes: ["text"]
         defaultOutputModes: ["text"]
         skills:
@@ -145,7 +189,16 @@ apps:
             description: "Adjust thermostats and climate devices"
           - id: sensor_history
             name: "Sensor History"
-            description: "Query historical sensor data"
+            description: "Query historical sensor data and trends"
+          - id: calendar_events
+            name: "Calendar Events"
+            description: "Read upcoming events and schedules from HA calendars"
+          - id: automation_scripts
+            name: "Automations & Scripts"
+            description: "Describe what automations and scripts do and how they are configured"
+          - id: system_diagnostics
+            name: "System Diagnostics"
+            description: "Check HA version, error logs, config validity, and system info"
 
       agent_card_publishing:
         interval_seconds: 10
