@@ -1,0 +1,62 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+dist/
+*.egg-info/
+.eggs/
+*.egg
+pip-log.txt
+pip-delete-this-directory.txt
+
+# Virtual environments
+.venv/
+venv/
+ENV/
+env.bak/
+venv.bak/
+
+# Testing / coverage
+htmlcov/
+.tox/
+.nox/
+.coverage
+.coverage.*
+.cache
+nosetests.xml
+coverage.xml
+*.cover
+.pytest_cache/
+.mypy_cache/
+.dmypy.json
+.pyre/
+.pytype/
+.ruff_cache/
+
+# SAM runtime files
+.sam/
+*.key
+*.a2a*
+*.jsonl
+sam.log.*
+data/artifacts/
+
+# Environment / secrets — never commit these
+.env
+.env.*
+!.env.example
+
+# Docker
+.docker/
+
+# Editor
+.vscode/settings.json
+.idea/
+.history
+.DS_Store
+
+# Misc
+tmp/

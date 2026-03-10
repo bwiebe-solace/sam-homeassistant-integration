@@ -1,0 +1,12 @@
+services:
+  sam:
+    build: .
+    ports:
+      - "8000:8000"
+    env_file: .env
+    volumes:
+      - sam-artifacts:/tmp/sam-jarvis
+    restart: unless-stopped
+
+volumes:
+  sam-artifacts:

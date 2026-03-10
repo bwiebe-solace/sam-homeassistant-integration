@@ -1,0 +1,26 @@
+shared_config:
+  - broker_connection: &broker_connection
+      dev_mode: ${SOLACE_DEV_MODE, false}
+      broker_url: ${SOLACE_BROKER_URL}
+      broker_username: ${SOLACE_BROKER_USERNAME}
+      broker_password: ${SOLACE_BROKER_PASSWORD}
+      broker_vpn: ${SOLACE_BROKER_VPN}
+      temporary_queue: ${USE_TEMPORARY_QUEUES, true}
+
+  - models:
+    llm: &llm
+      model: ${LLM_MODEL_NAME, openai/gemini-2.0-flash}
+      api_base: ${LLM_SERVICE_ENDPOINT}
+      api_key: ${LLM_SERVICE_API_KEY}
+      cache_strategy: "5m"
+
+  - services:
+    session_service: &session_service
+      type: "sql"
+      default_behavior: "PERSISTENT"
+      database_url: ${SESSION_DATABASE_URL, sqlite:///session.db}
+
+    artifact_service: &artifact_service
+      type: "filesystem"
+      base_path: ${ARTIFACT_BASE_PATH, /tmp/sam-jarvis}
+      artifact_scope: namespace
