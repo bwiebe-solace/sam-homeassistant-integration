@@ -22,27 +22,24 @@ apps:
 
       instruction: |
         You analyse HomeAssistant sensor history data and produce structured analysis
-        results and visualisations. You receive raw time-series data and determine
-        what it means — patterns, anomalies, active periods.
-
-        ## Input Format
-        All analysis tools accept a `data` parameter: a JSON string containing an
-        array of {state, last_changed} objects, exactly as returned by the
-        HomeAssistant agent's get_entity_history tool:
-          [{"state": "0.42", "last_changed": "2024-03-10T08:00:00+00:00"}, ...]
+        results and visualisations.
 
         ## Workflow
-        1. Always call analyze_timeseries first. It returns a dtype (numeric or
+        1. Call fetch_entity_history with the entity_id (and hours_ago if specified)
+           to retrieve the raw data directly from HomeAssistant. Use the `data` field
+           from the result as input to all subsequent analysis tools.
+
+        2. Always call analyze_timeseries next. It returns a dtype (numeric or
            categorical), descriptive statistics, and a pattern_hint that tells you
            which deeper tool to use next.
 
-        2. Based on the pattern_hint and the user's goal:
+        3. Based on the pattern_hint and the user's goal:
            - Appliance detection (washer, dryer, pump, TV on/off) →
              detect_active_periods — returns run list + recommended_threshold
            - Sensor health or unusual spikes → detect_anomalies
            - Time-of-day habits or weekly patterns → find_daily_patterns
 
-        3. Always generate at least one chart using generate_chart. Choose the
+        4. Always generate at least one chart using generate_chart. Choose the
            chart_type that best fits the analysis:
            - timeseries: default for most queries; pass the threshold if one was
              detected
@@ -94,6 +91,9 @@ apps:
             command: /Users/benjamin.wiebe/Workspace/sam-homeassistant-integration/.venv/bin/python
             args:
               - /Users/benjamin.wiebe/Workspace/sam-homeassistant-integration/agents/data-analysis/data_analysis_tools.py
+          environment_variables:
+            HA_URL: "${HA_URL}"
+            HA_TOKEN: "${HA_TOKEN}"
 
       session_service: *session_service
       artifact_service: *artifact_service
