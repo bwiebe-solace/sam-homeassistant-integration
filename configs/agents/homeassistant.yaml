@@ -40,6 +40,9 @@ apps:
 
         ## Guidelines
         - Always prefer list_entities over GetLiveContext for state queries.
+        - After calling any tool, you MUST always produce a text response that answers
+          the user's question. If the result is empty (e.g. no lights are on), say so
+          explicitly — never return a blank response.
         - After controlling a device, confirm in one short sentence.
         - If a request is ambiguous (e.g. "turn off the lights" with many rooms), ask
           for clarification rather than acting on all of them at once.
