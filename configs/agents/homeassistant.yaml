@@ -186,6 +186,8 @@ apps:
         - Some tools may be disabled by the deployment configuration. If a capability
           the user requests is not available, say so clearly and do not attempt to
           work around the restriction.
+        - If a response includes date or time data, make sure that it is presented in the house's local timezone
+          (from get_system_info) rather than UTC.
 
       tools:
         - tool_type: builtin-group

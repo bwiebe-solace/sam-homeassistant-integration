@@ -28,7 +28,7 @@ Tools:
 import asyncio
 import json
 import os
-import sys
+import re
 from datetime import datetime, timedelta, timezone
 
 import httpx
@@ -77,6 +77,7 @@ _ENABLED_TOOLS: frozenset[str] = frozenset(
 )
 
 _SCRIPT_DOMAINS = {"script", "automation"}
+_DOMAIN_RE = re.compile(r"^[a-z_]+$")
 
 
 def _check_permission(name: str, arguments: dict) -> str | None:
@@ -90,6 +91,16 @@ def _check_permission(name: str, arguments: dict) -> str | None:
                 "by the deployment configuration."
             )
     return None
+
+
+def _http_error(response: httpx.Response, context: str = "") -> list[types.TextContent]:
+    """Return a TextContent describing an HTTP error from HA, including the response body."""
+    detail = response.text.strip() or "(no body)"
+    prefix = f"{context}: " if context else ""
+    return [types.TextContent(
+        type="text",
+        text=f"{prefix}HA returned HTTP {response.status_code}: {detail}",
+    )]
 
 # ─────────────────────────────────────────────────────────────────────────────
 
@@ -551,7 +562,7 @@ async def call_tool(name: str, arguments: dict) -> list[types.TextContent]:
     if error:
         return [types.TextContent(type="text", text=error)]
 
-    async with httpx.AsyncClient(headers=_HEADERS, timeout=15) as client:
+    async with httpx.AsyncClient(headers=_HEADERS, timeout=30) as client:
         if name == "list_entities":
             return await _list_entities(client, arguments)
         elif name == "get_entity_state":
@@ -599,44 +610,46 @@ async def _list_entities(
     state_filter = args.get("state")
     name_filter = args.get("name_filter")
 
-    if domain and not state_filter and not name_filter:
-        template = "{{ states." + domain + " | map(attribute='as_dict') | list | tojson }}"
-    else:
-        loop_src = ("states." + domain) if domain else "states"
+    if domain and not _DOMAIN_RE.fullmatch(domain):
+        return [types.TextContent(type="text", text=f"Invalid domain '{domain}': must contain only lowercase letters and underscores.")]
 
-        conditions = []
-        if state_filter:
-            conditions.append("s.state == '" + state_filter + "'")
-        if name_filter:
-            kw = name_filter.lower().replace("'", "").replace("{", "").replace("}", "")
-            conditions.append(
-                "('" + kw + "' in (s.name | lower) or '" + kw + "' in (s.entity_id | lower))"
-            )
+    loop_src = f"states.{domain}" if domain else "states"
+    conditions = []
+    variables: dict = {}
 
-        parts = [
-            "{% set ns = namespace(items=[]) %}",
-            "{% for s in " + loop_src + " %}",
-        ]
-        if conditions:
-            parts.append("{% if " + " and ".join(conditions) + " %}")
-        parts += [
-            "{% set dc = s.attributes.get('device_class', none) %}",
-            "{% set is_grp = s.attributes.get('entity_id') is not none %}",
-            "{% set ns.items = ns.items + [dict(entity_id=s.entity_id, name=s.name, state=s.state, domain=s.domain, device_class=dc, is_group=is_grp)] %}",
-        ]
-        if conditions:
-            parts.append("{% endif %}")
-        parts += [
-            "{% endfor %}",
-            "{{ ns.items | tojson }}",
-        ]
-        template = "".join(parts)
+    if state_filter:
+        variables["state_filter"] = state_filter
+        conditions.append("s.state == state_filter")
+    if name_filter:
+        variables["kw"] = name_filter.lower()
+        conditions.append("(kw in (s.name | lower) or kw in (s.entity_id | lower))")
 
-    response = await client.post(
-        f"{HA_URL}/api/template",
-        json={"template": template},
-    )
-    response.raise_for_status()
+    parts = [
+        "{% set ns = namespace(items=[]) %}",
+        "{% for s in " + loop_src + " %}",
+    ]
+    if conditions:
+        parts.append("{% if " + " and ".join(conditions) + " %}")
+    parts += [
+        "{% set dc = s.attributes.get('device_class', none) %}",
+        "{% set is_grp = s.attributes.get('entity_id') is not none %}",
+        "{% set ns.items = ns.items + [dict(entity_id=s.entity_id, name=s.name, state=s.state, domain=s.domain, device_class=dc, is_group=is_grp)] %}",
+    ]
+    if conditions:
+        parts.append("{% endif %}")
+    parts += [
+        "{% endfor %}",
+        "{{ ns.items | tojson }}",
+    ]
+    template = "".join(parts)
+
+    payload: dict = {"template": template}
+    if variables:
+        payload["variables"] = variables
+
+    response = await client.post(f"{HA_URL}/api/template", json=payload)
+    if response.is_error:
+        return _http_error(response, "list_entities")
 
     raw = response.text.strip()
     try:
@@ -653,9 +666,9 @@ async def _get_entity_state(
 ) -> list[types.TextContent]:
     entity_id = args["entity_id"]
     response = await client.get(f"{HA_URL}/api/states/{entity_id}")
-    response.raise_for_status()
-    result = json.dumps(response.json(), indent=2)
-    return [types.TextContent(type="text", text=result)]
+    if response.is_error:
+        return _http_error(response, "get_entity_state")
+    return [types.TextContent(type="text", text=json.dumps(response.json(), indent=2))]
 
 
 async def _get_entity_history(
@@ -666,9 +679,8 @@ async def _get_entity_history(
     significant_only = args.get("significant_changes_only", True)
 
     start_time = datetime.now(timezone.utc) - timedelta(hours=hours_ago)
-    start_str = start_time.isoformat()
 
-    params = {
+    params: dict = {
         "filter_entity_id": entity_id,
         "minimal_response": "true",
     }
@@ -676,16 +688,16 @@ async def _get_entity_history(
         params["significant_changes_only"] = "true"
 
     response = await client.get(
-        f"{HA_URL}/api/history/period/{start_str}",
+        f"{HA_URL}/api/history/period/{start_time.isoformat()}",
         params=params,
     )
-    response.raise_for_status()
+    if response.is_error:
+        return _http_error(response, "get_entity_history")
 
     data = response.json()
     # API returns a list of lists (one per entity); flatten to the entity's list
     history = data[0] if data else []
-    result = json.dumps(history, indent=2)
-    return [types.TextContent(type="text", text=result)]
+    return [types.TextContent(type="text", text=json.dumps(history, indent=2))]
 
 
 async def _get_automation_config(
@@ -694,7 +706,8 @@ async def _get_automation_config(
     entity_id = args["entity_id"]
 
     state_response = await client.get(f"{HA_URL}/api/states/{entity_id}")
-    state_response.raise_for_status()
+    if state_response.is_error:
+        return _http_error(state_response, "get_automation_config")
     state = state_response.json()
 
     automation_id = state.get("attributes", {}).get("id")
@@ -706,9 +719,9 @@ async def _get_automation_config(
         )]
 
     config_response = await client.get(f"{HA_URL}/api/config/automation/config/{automation_id}")
-    config_response.raise_for_status()
-    result = json.dumps(config_response.json(), indent=2)
-    return [types.TextContent(type="text", text=result)]
+    if config_response.is_error:
+        return _http_error(config_response, "get_automation_config")
+    return [types.TextContent(type="text", text=json.dumps(config_response.json(), indent=2))]
 
 
 async def _get_script_config(
@@ -716,22 +729,18 @@ async def _get_script_config(
 ) -> list[types.TextContent]:
     entity_id = args["entity_id"]
 
-    state_response = await client.get(f"{HA_URL}/api/states/{entity_id}")
-    state_response.raise_for_status()
-    state = state_response.json()
-
-    script_id = state.get("attributes", {}).get("id")
-    if not script_id:
+    if not entity_id.startswith("script."):
         return [types.TextContent(
             type="text",
-            text=f"Could not find internal config ID for {entity_id}. "
-                 f"Available attributes: {json.dumps(state.get('attributes', {}), indent=2)}",
+            text=f"Expected a script entity_id (e.g. 'script.bedtime_routine'), got: {entity_id}",
         )]
 
+    # Script config endpoint uses the slug after 'script.' directly — no separate id attribute
+    script_id = entity_id[len("script."):]
     config_response = await client.get(f"{HA_URL}/api/config/script/config/{script_id}")
-    config_response.raise_for_status()
-    result = json.dumps(config_response.json(), indent=2)
-    return [types.TextContent(type="text", text=result)]
+    if config_response.is_error:
+        return _http_error(config_response, "get_script_config")
+    return [types.TextContent(type="text", text=json.dumps(config_response.json(), indent=2))]
 
 
 async def _get_logbook(
@@ -740,20 +749,17 @@ async def _get_logbook(
     entity_id = args.get("entity_id")
     hours_ago = args.get("hours_ago", 24)
 
-    start = datetime.now(timezone.utc) - timedelta(hours=hours_ago)
-    end = datetime.now(timezone.utc)
+    now = datetime.now(timezone.utc)
+    start = now - timedelta(hours=hours_ago)
 
-    params = {"end_time": end.isoformat()}
+    params: dict = {"end_time": now.isoformat()}
     if entity_id:
         params["entity_id"] = entity_id
 
-    response = await client.get(
-        f"{HA_URL}/api/logbook/{start.isoformat()}",
-        params=params,
-    )
-    response.raise_for_status()
-    result = json.dumps(response.json(), indent=2)
-    return [types.TextContent(type="text", text=result)]
+    response = await client.get(f"{HA_URL}/api/logbook/{start.isoformat()}", params=params)
+    if response.is_error:
+        return _http_error(response, "get_logbook")
+    return [types.TextContent(type="text", text=json.dumps(response.json(), indent=2))]
 
 
 async def _get_calendar_events(
@@ -764,7 +770,8 @@ async def _get_calendar_events(
 
     if not calendar_entity_id:
         response = await client.get(f"{HA_URL}/api/calendars")
-        response.raise_for_status()
+        if response.is_error:
+            return _http_error(response, "get_calendar_events")
         return [types.TextContent(type="text", text=json.dumps(response.json(), indent=2))]
 
     start = datetime.now(timezone.utc)
@@ -774,9 +781,9 @@ async def _get_calendar_events(
         f"{HA_URL}/api/calendars/{calendar_entity_id}",
         params={"start": start.isoformat(), "end": end.isoformat()},
     )
-    response.raise_for_status()
-    result = json.dumps(response.json(), indent=2)
-    return [types.TextContent(type="text", text=result)]
+    if response.is_error:
+        return _http_error(response, "get_calendar_events")
+    return [types.TextContent(type="text", text=json.dumps(response.json(), indent=2))]
 
 
 async def _list_services(
@@ -785,35 +792,36 @@ async def _list_services(
     domain = args.get("domain")
 
     response = await client.get(f"{HA_URL}/api/services")
-    response.raise_for_status()
+    if response.is_error:
+        return _http_error(response, "list_services")
     data = response.json()
 
     if domain:
         data = [entry for entry in data if entry.get("domain") == domain]
 
-    result = json.dumps(data, indent=2)
-    return [types.TextContent(type="text", text=result)]
+    return [types.TextContent(type="text", text=json.dumps(data, indent=2))]
 
 
 async def _get_system_info(
     client: httpx.AsyncClient, args: dict
 ) -> list[types.TextContent]:
     response = await client.get(f"{HA_URL}/api/config")
-    response.raise_for_status()
-    result = json.dumps(response.json(), indent=2)
-    return [types.TextContent(type="text", text=result)]
+    if response.is_error:
+        return _http_error(response, "get_system_info")
+    return [types.TextContent(type="text", text=json.dumps(response.json(), indent=2))]
 
 
 async def _get_error_log(
     client: httpx.AsyncClient, args: dict
 ) -> list[types.TextContent]:
-    tail_lines = int(args.get("tail_lines", 50))
+    tail_lines = max(1, int(args.get("tail_lines", 50)))
 
     response = await client.get(f"{HA_URL}/api/error_log")
-    response.raise_for_status()
+    if response.is_error:
+        return _http_error(response, "get_error_log")
 
     lines = response.text.splitlines()
-    tail = "\n".join(lines[-tail_lines:]) if len(lines) > tail_lines else response.text
+    tail = "\n".join(lines[-tail_lines:])
     return [types.TextContent(type="text", text=tail)]
 
 
@@ -823,7 +831,8 @@ async def _get_camera_snapshot_url(
     camera_entity_id = args["camera_entity_id"]
 
     state_response = await client.get(f"{HA_URL}/api/states/{camera_entity_id}")
-    state_response.raise_for_status()
+    if state_response.is_error:
+        return _http_error(state_response, "get_camera_snapshot_url")
     state = state_response.json()
 
     access_token = state.get("attributes", {}).get("access_token")
@@ -842,9 +851,9 @@ async def _check_config(
     client: httpx.AsyncClient, args: dict
 ) -> list[types.TextContent]:
     response = await client.post(f"{HA_URL}/api/config/core/check_config")
-    response.raise_for_status()
-    result = json.dumps(response.json(), indent=2)
-    return [types.TextContent(type="text", text=result)]
+    if response.is_error:
+        return _http_error(response, "check_config")
+    return [types.TextContent(type="text", text=json.dumps(response.json(), indent=2))]
 
 
 async def _create_automation(
@@ -853,18 +862,24 @@ async def _create_automation(
     config = args["config"]
     automation_id = args.get("automation_id")
 
-    if automation_id:
-        url = f"{HA_URL}/api/config/automation/config/{automation_id}"
-    else:
-        url = f"{HA_URL}/api/config/automation/config"
-
+    url = (
+        f"{HA_URL}/api/config/automation/config/{automation_id}"
+        if automation_id
+        else f"{HA_URL}/api/config/automation/config"
+    )
     response = await client.post(url, json=config)
-    response.raise_for_status()
+    if response.is_error:
+        return _http_error(response, "create_automation")
     create_result = response.json()
 
-    await client.post(f"{HA_URL}/api/services/automation/reload")
-
-    return [types.TextContent(type="text", text=json.dumps(create_result, indent=2))]
+    reload_response = await client.post(f"{HA_URL}/api/services/automation/reload")
+    result_text = json.dumps(create_result, indent=2)
+    if reload_response.is_error:
+        result_text += (
+            f"\n\nWarning: automation reload failed (HTTP {reload_response.status_code}). "
+            "The automation was saved but may not be active yet."
+        )
+    return [types.TextContent(type="text", text=result_text)]
 
 
 async def _delete_automation(
@@ -873,11 +888,16 @@ async def _delete_automation(
     automation_id = args["automation_id"]
 
     response = await client.delete(f"{HA_URL}/api/config/automation/config/{automation_id}")
-    response.raise_for_status()
+    if response.is_error:
+        return _http_error(response, "delete_automation")
 
-    await client.post(f"{HA_URL}/api/services/automation/reload")
-
-    return [types.TextContent(type="text", text=f"Automation '{automation_id}' deleted successfully.")]
+    reload_response = await client.post(f"{HA_URL}/api/services/automation/reload")
+    result_text = f"Automation '{automation_id}' deleted successfully."
+    if reload_response.is_error:
+        result_text += (
+            f"\n\nWarning: automation reload failed (HTTP {reload_response.status_code})."
+        )
+    return [types.TextContent(type="text", text=result_text)]
 
 
 async def _create_script(
@@ -887,12 +907,18 @@ async def _create_script(
     config = args["config"]
 
     response = await client.post(f"{HA_URL}/api/config/script/config/{script_id}", json=config)
-    response.raise_for_status()
+    if response.is_error:
+        return _http_error(response, "create_script")
     create_result = response.json()
 
-    await client.post(f"{HA_URL}/api/services/script/reload")
-
-    return [types.TextContent(type="text", text=json.dumps(create_result, indent=2))]
+    reload_response = await client.post(f"{HA_URL}/api/services/script/reload")
+    result_text = json.dumps(create_result, indent=2)
+    if reload_response.is_error:
+        result_text += (
+            f"\n\nWarning: script reload failed (HTTP {reload_response.status_code}). "
+            "The script was saved but may not be active yet."
+        )
+    return [types.TextContent(type="text", text=result_text)]
 
 
 async def _delete_script(
@@ -901,11 +927,16 @@ async def _delete_script(
     script_id = args["script_id"]
 
     response = await client.delete(f"{HA_URL}/api/config/script/config/{script_id}")
-    response.raise_for_status()
+    if response.is_error:
+        return _http_error(response, "delete_script")
 
-    await client.post(f"{HA_URL}/api/services/script/reload")
-
-    return [types.TextContent(type="text", text=f"Script '{script_id}' deleted successfully.")]
+    reload_response = await client.post(f"{HA_URL}/api/services/script/reload")
+    result_text = f"Script '{script_id}' deleted successfully."
+    if reload_response.is_error:
+        result_text += (
+            f"\n\nWarning: script reload failed (HTTP {reload_response.status_code})."
+        )
+    return [types.TextContent(type="text", text=result_text)]
 
 
 async def _create_helper(
@@ -923,26 +954,35 @@ async def _create_helper(
         )]
 
     response = await client.post(f"{HA_URL}/api/config/{helper_type}/config/{helper_id}", json=config)
-    response.raise_for_status()
+    if response.is_error:
+        return _http_error(response, "create_helper")
     create_result = response.json()
 
-    await client.post(f"{HA_URL}/api/services/{helper_type}/reload")
-
-    return [types.TextContent(type="text", text=json.dumps(create_result, indent=2))]
+    reload_response = await client.post(f"{HA_URL}/api/services/{helper_type}/reload")
+    result_text = json.dumps(create_result, indent=2)
+    if reload_response.is_error:
+        result_text += (
+            f"\n\nWarning: {helper_type} reload failed (HTTP {reload_response.status_code}). "
+            "The helper was saved but may not be active yet."
+        )
+    return [types.TextContent(type="text", text=result_text)]
 
 
 async def _call_service(
     client: httpx.AsyncClient, args: dict
 ) -> list[types.TextContent]:
-    domain = args.pop("domain")
-    service = args.pop("service")
-    response = await client.post(
-        f"{HA_URL}/api/services/{domain}/{service}",
-        json=args,
-    )
-    response.raise_for_status()
-    body = response.text.strip()
-    result = json.dumps(response.json(), indent=2) if body else "Service called successfully."
+    domain = args["domain"]
+    service = args["service"]
+    payload = {k: v for k, v in args.items() if k not in ("domain", "service")}
+
+    response = await client.post(f"{HA_URL}/api/services/{domain}/{service}", json=payload)
+    if response.is_error:
+        return _http_error(response, "call_service")
+
+    try:
+        result = json.dumps(response.json(), indent=2)
+    except Exception:
+        result = response.text.strip() or "Service called successfully."
     return [types.TextContent(type="text", text=result)]
 
 
