@@ -1,0 +1,170 @@
+"""
+Custom MCP stdio server providing filtered HomeAssistant state queries.
+
+Uses HA REST API directly instead of the built-in MCP server's GetLiveContext,
+which always dumps all entities (~19KB+) regardless of what is needed.
+
+Tools:
+  - list_entities: Filter entities by domain and/or state via POST /api/template
+  - get_entity_state: Get a single entity's full state via GET /api/states/{entity_id}
+"""
+
+import asyncio
+import json
+import os
+import sys
+
+import httpx
+from mcp.server import Server
+from mcp.server.stdio import stdio_server
+from mcp import types
+
+HA_URL = os.environ["HA_URL"].rstrip("/")
+HA_TOKEN = os.environ["HA_TOKEN"]
+
+_HEADERS = {
+    "Authorization": f"Bearer {HA_TOKEN}",
+    "Content-Type": "application/json",
+}
+
+server = Server("ha-rest-tools")
+
+
+@server.list_tools()
+async def list_tools() -> list[types.Tool]:
+    return [
+        types.Tool(
+            name="list_entities",
+            description=(
+                "List HomeAssistant entities filtered by domain and/or state. "
+                "Returns entity IDs, friendly names, and current states. "
+                "Use this instead of GetLiveContext when you need entities "
+                "from a specific domain (e.g. light, switch, sensor) or with "
+                "a specific state (e.g. on, off)."
+            ),
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "domain": {
+                        "type": "string",
+                        "description": (
+                            "Entity domain to filter by, e.g. 'light', 'switch', "
+                            "'sensor', 'climate', 'media_player'. Omit to include all domains."
+                        ),
+                    },
+                    "state": {
+                        "type": "string",
+                        "description": (
+                            "State value to filter by, e.g. 'on', 'off', 'playing', 'idle'. "
+                            "Omit to include all states."
+                        ),
+                    },
+                },
+                "additionalProperties": False,
+            },
+        ),
+        types.Tool(
+            name="get_entity_state",
+            description=(
+                "Get the full state and attributes of a single HomeAssistant entity by its entity_id. "
+                "Use this when you need detailed information (e.g. brightness, colour, temperature) "
+                "for a specific entity."
+            ),
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "entity_id": {
+                        "type": "string",
+                        "description": "The entity ID, e.g. 'light.living_room' or 'sensor.temperature'.",
+                    }
+                },
+                "required": ["entity_id"],
+                "additionalProperties": False,
+            },
+        ),
+    ]
+
+
+@server.call_tool()
+async def call_tool(name: str, arguments: dict) -> list[types.TextContent]:
+    async with httpx.AsyncClient(headers=_HEADERS, timeout=15) as client:
+        if name == "list_entities":
+            return await _list_entities(client, arguments)
+        elif name == "get_entity_state":
+            return await _get_entity_state(client, arguments)
+        else:
+            raise ValueError(f"Unknown tool: {name}")
+
+
+async def _list_entities(
+    client: httpx.AsyncClient, args: dict
+) -> list[types.TextContent]:
+    domain = args.get("domain")
+    state_filter = args.get("state")
+
+    if domain and state_filter:
+        template = (
+            f"{{% set ns = namespace(items=[]) %}}"
+            f"{{% for s in states.{domain} %}}"
+            f"{{% if s.state == '{state_filter}' %}}"
+            f"{{% set ns.items = ns.items + [dict(entity_id=s.entity_id, name=s.name, state=s.state, attributes=s.attributes)] %}}"
+            f"{{% endif %}}"
+            f"{{% endfor %}}"
+            f"{{{{ ns.items | tojson }}}}"
+        )
+    elif domain:
+        template = (
+            f"{{{{ states.{domain} | map(attribute='as_dict') | list | tojson }}}}"
+        )
+    elif state_filter:
+        template = (
+            f"{{% set ns = namespace(items=[]) %}}"
+            f"{{% for s in states %}}"
+            f"{{% if s.state == '{state_filter}' %}}"
+            f"{{% set ns.items = ns.items + [dict(entity_id=s.entity_id, name=s.name, state=s.state)] %}}"
+            f"{{% endif %}}"
+            f"{{% endfor %}}"
+            f"{{{{ ns.items | tojson }}}}"
+        )
+    else:
+        template = (
+            "{% set ns = namespace(items=[]) %}"
+            "{% for s in states %}"
+            "{% set ns.items = ns.items + [dict(entity_id=s.entity_id, name=s.name, state=s.state)] %}"
+            "{% endfor %}"
+            "{{ ns.items | tojson }}"
+        )
+
+    response = await client.post(
+        f"{HA_URL}/api/template",
+        json={"template": template},
+    )
+    response.raise_for_status()
+
+    raw = response.text.strip()
+    try:
+        entities = json.loads(raw)
+        result = json.dumps(entities, indent=2)
+    except json.JSONDecodeError:
+        result = raw
+
+    return [types.TextContent(type="text", text=result)]
+
+
+async def _get_entity_state(
+    client: httpx.AsyncClient, args: dict
+) -> list[types.TextContent]:
+    entity_id = args["entity_id"]
+    response = await client.get(f"{HA_URL}/api/states/{entity_id}")
+    response.raise_for_status()
+    result = json.dumps(response.json(), indent=2)
+    return [types.TextContent(type="text", text=result)]
+
+
+async def main():
+    async with stdio_server() as (read_stream, write_stream):
+        await server.run(read_stream, write_stream, server.create_initialization_options())
+
+
+if __name__ == "__main__":
+    asyncio.run(main())

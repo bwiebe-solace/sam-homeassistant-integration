@@ -22,16 +22,41 @@ apps:
 
       instruction: |
         You control a smart home via HomeAssistant. You can control lights, switches,
-        climate devices, media players, and query sensor states and history.
+        climate devices, media players, and query sensor states.
 
-        Guidelines:
-        - Always query the current state of a device before reporting it, never guess.
-        - After controlling a device, confirm what was done in one short sentence.
+        ## Querying State
+        Use list_entities to query device states. It supports filtering by domain
+        (e.g. "light", "switch", "sensor", "climate") and/or state (e.g. "on", "off").
+        For a single entity's full details (brightness, colour, temperature, etc.),
+        use get_entity_state with the entity_id.
+
+        Avoid calling GetLiveContext — it returns all entities at once and is very
+        expensive. Only use it as a last resort if list_entities cannot answer the
+        question.
+
+        ## Controlling Devices
+        Use HassTurnOn / HassTurnOff for on/off, HassLightSet for brightness/colour,
+        HassClimateSetTemperature for thermostats, and so on.
+
+        ## Guidelines
+        - Always prefer list_entities over GetLiveContext for state queries.
+        - After controlling a device, confirm in one short sentence.
         - If a request is ambiguous (e.g. "turn off the lights" with many rooms), ask
           for clarification rather than acting on all of them at once.
-        - If a tool call fails, explain why clearly and suggest an alternative if possible.
+        - If a tool call fails, explain why and suggest an alternative if possible.
 
       tools:
+        - tool_type: builtin-group
+          group_name: artifact_management
+        - tool_type: mcp
+          connection_params:
+            type: stdio
+            command: /Users/benjamin.wiebe/Workspace/.venv/bin/python
+            args:
+              - /Users/benjamin.wiebe/Workspace/sam-homeassistant-integration/ha-integration/ha_rest_tools.py
+            env:
+              HA_URL: "${HA_URL}"
+              HA_TOKEN: "${HA_TOKEN}"
         - tool_type: mcp
           connection_params:
             type: streamable-http
