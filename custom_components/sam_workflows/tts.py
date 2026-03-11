@@ -62,7 +62,7 @@ class SAMTextToSpeechEntity(TextToSpeechEntity):
         sam_url = self._entry.data["sam_url"].rstrip("/")
         session = async_get_clientsession(self.hass)
 
-        body: dict[str, Any] = {"text": message}
+        body: dict[str, Any] = {"input": message}
         if voice := options.get("voice"):
             body["voice"] = voice
 

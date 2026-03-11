@@ -95,7 +95,7 @@ class SAMSpeechToTextEntity(SpeechToTextEntity):
 
         form = aiohttp.FormData()
         form.add_field(
-            "file",
+            "audio",
             bytes(audio_data),
             filename="audio.wav",
             content_type="audio/wav",

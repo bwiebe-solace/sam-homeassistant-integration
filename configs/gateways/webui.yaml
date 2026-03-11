@@ -47,9 +47,43 @@ apps:
       frontend_welcome_message: "Hello. I am SAM. How can I assist you today?"
 
       frontend_feature_enablement:
-        speechToText: false
-        textToSpeech: false
         background_tasks: false
 
       task_logging:
         enabled: false
+
+      speech:
+        stt:
+          provider: openai
+          openai:
+            url: "${STT_API_URL, https://api.openai.com/v1/audio/transcriptions}"
+            api_key: "${STT_API_KEY}"
+            model: "whisper-1"
+
+        tts:
+          provider: gemini
+          gemini:
+            api_key: "${LLM_SERVICE_API_KEY}"
+            model: "gemini-2.5-flash-preview-tts"
+            default_voice: "Kore"
+            language: "en-US"
+            voices:
+              - "Kore"
+              - "Puck"
+              - "Zephyr"
+              - "Charon"
+              - "Fenrir"
+              - "Leda"
+              - "Aoede"
+
+        speechTab:
+          speechToText:
+            speechToText: true
+            engineSTT: "external"
+            languageSTT: "en-US"
+          textToSpeech:
+            textToSpeech: true
+            engineTTS: "external"
+            voice: "Kore"
+            playbackRate: 1.0
+            cacheTTS: true
