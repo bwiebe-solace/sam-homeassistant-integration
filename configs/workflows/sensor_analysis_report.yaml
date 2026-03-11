@@ -1,0 +1,107 @@
+log:
+  stdout_log_level: INFO
+  log_file_level: DEBUG
+  log_file: sensor-analysis-report.log
+
+!include ../../shared_config.yaml
+
+apps:
+  - name: sensor_analysis_report_workflow
+    app_base_path: .
+    app_module: solace_agent_mesh.workflow.app
+
+    broker:
+      <<: *broker_connection
+
+    app_config:
+      namespace: ${NAMESPACE}
+      name: "SensorAnalysisReport"
+      display_name: "Sensor Analysis Report"
+
+      max_workflow_execution_time_seconds: 300
+      default_node_timeout_seconds: 120
+
+      workflow:
+        version: "1.0.0"
+        description: |
+          Retrieves historical data for a sensor entity, analyses it for patterns
+          and anomalies, generates a chart, and returns a plain-English summary.
+          Useful for understanding appliance usage, energy consumption, temperature
+          trends, and more.
+
+        input_schema:
+          type: object
+          properties:
+            entity_id:
+              type: string
+              description: "HA entity ID to analyse (e.g. sensor.power_meter)"
+            hours_ago:
+              type: integer
+              default: 24
+              description: "How many hours of history to analyse. Defaults to 24."
+          required: [entity_id]
+
+        output_schema:
+          type: object
+          properties:
+            summary:
+              type: string
+              description: "Plain-English analysis summary"
+            chart_artifact:
+              type: string
+              description: "Artifact name of the generated chart (if produced)"
+          required: [summary]
+
+        nodes:
+          - id: analyse
+            type: agent
+            agent_name: "HomeAssistantAgent"
+            input:
+              entity_id: "{{workflow.input.entity_id}}"
+              hours_ago: "{{workflow.input.hours_ago}}"
+            instruction: |
+              Perform a sensor analysis for the entity_id over the last hours_ago hours.
+
+              Follow this exact sequence:
+              1. Call get_entity_history with entity_id=entity_id,
+                 hours_ago=hours_ago, significant_changes_only=false to retrieve
+                 every recorded data point.
+              2. Pass the raw JSON result directly to analyze_timeseries as the
+                 `data` parameter. Do not summarise or truncate it.
+              3. Based on the pattern_hint returned, call the most appropriate
+                 deeper analysis tool: detect_active_periods, detect_anomalies,
+                 or find_daily_patterns.
+              4. Call generate_chart to produce a time-series chart.
+              5. Save the chart using save_artifact with content_type image/png.
+
+              Return a concise plain-English summary of what was found, and the
+              artifact name of the saved chart.
+            output_schema_override:
+              type: object
+              properties:
+                summary:
+                  type: string
+                  description: "Analysis findings in plain English"
+                chart_artifact:
+                  type: string
+                  description: "Artifact name of the chart (optional)"
+              required: [summary]
+
+        output_mapping:
+          summary: "{{analyse.output.summary}}"
+          chart_artifact:
+            coalesce:
+              - "{{analyse.output.chart_artifact}}"
+              - ""
+
+        skills:
+          - id: sensor_analysis
+            name: "Sensor Analysis"
+            description: "Analyses sensor history, detects patterns and anomalies, and generates a chart"
+            tags: ["analysis", "sensors", "chart"]
+
+      session_service: *session_service
+      artifact_service: *artifact_service
+
+      agent_card_publishing: { interval_seconds: 10 }
+      agent_discovery: { enabled: true }
