@@ -297,9 +297,9 @@ apps:
         - tool_type: mcp
           connection_params:
             type: stdio
-            command: /Users/benjamin.wiebe/Workspace/.venv/bin/python
+            command: "${PYTHON_BIN, python}"
             args:
-              - /Users/benjamin.wiebe/Workspace/sam-homeassistant-integration/agents/homeassistant/ha_rest_tools.py
+              - agents/homeassistant/ha_rest_tools.py
           environment_variables:
             HA_URL: "${HA_URL}"
             HA_TOKEN: "${HA_TOKEN}"
@@ -317,9 +317,9 @@ apps:
         - tool_type: mcp
           connection_params:
             type: stdio
-            command: /Users/benjamin.wiebe/Workspace/sam-homeassistant-integration/.venv/bin/python
+            command: "${PYTHON_BIN, python}"
             args:
-              - /Users/benjamin.wiebe/Workspace/sam-homeassistant-integration/agents/data-analysis/data_analysis_tools.py
+              - agents/data-analysis/data_analysis_tools.py
 
       session_service: *session_service
       artifact_service: *artifact_service
