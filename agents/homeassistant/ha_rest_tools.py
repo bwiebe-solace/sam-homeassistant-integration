@@ -595,38 +595,41 @@ async def list_tools() -> list[types.Tool]:
         types.Tool(
             name="call_service",
             description=(
-                "Call a HomeAssistant service to control any device. "
+                "Call a HomeAssistant service to control any device or trigger any action. "
                 "Works for ALL entities regardless of voice-assistant exposure settings. "
                 "Use list_entities first to find the entity_id, then call the service.\n"
+                "Most services require entity_id, but some (e.g. notify) do not — pass the "
+                "service-specific parameters directly instead.\n"
                 "Common examples:\n"
-                "  Turn off light:    domain='light',   service='turn_off',          entity_id='light.coffee_bar_light'\n"
-                "  Turn on light:     domain='light',   service='turn_on',           entity_id='light.living_room'\n"
-                "  Set brightness:    domain='light',   service='turn_on',           entity_id='light.xxx', brightness_pct=80\n"
-                "  Set color temp:    domain='light',   service='turn_on',           entity_id='light.xxx', color_temp=300\n"
-                "  Toggle switch:     domain='switch',  service='toggle',            entity_id='switch.xxx'\n"
-                "  Set thermostat:    domain='climate', service='set_temperature',   entity_id='climate.xxx', temperature=21, hvac_mode='heat'\n"
-                "  Pause media:       domain='media_player', service='media_pause',  entity_id='media_player.xxx'\n"
-                "  Set volume:        domain='media_player', service='volume_set',   entity_id='media_player.xxx', volume_level=0.5\n"
-                "  Run script:        domain='script',  service='turn_on',           entity_id='script.xxx'\n"
-                "  Trigger automation: domain='automation', service='trigger',       entity_id='automation.xxx'"
+                "  Turn off light:      domain='light',        service='turn_off',        entity_id='light.coffee_bar_light'\n"
+                "  Turn on light:       domain='light',        service='turn_on',         entity_id='light.living_room'\n"
+                "  Set brightness:      domain='light',        service='turn_on',         entity_id='light.xxx', brightness_pct=80\n"
+                "  Set color temp:      domain='light',        service='turn_on',         entity_id='light.xxx', color_temp=300\n"
+                "  Toggle switch:       domain='switch',       service='toggle',          entity_id='switch.xxx'\n"
+                "  Set thermostat:      domain='climate',      service='set_temperature', entity_id='climate.xxx', temperature=21, hvac_mode='heat'\n"
+                "  Pause media:         domain='media_player', service='media_pause',     entity_id='media_player.xxx'\n"
+                "  Set volume:          domain='media_player', service='volume_set',      entity_id='media_player.xxx', volume_level=0.5\n"
+                "  Run script:          domain='script',       service='turn_on',         entity_id='script.xxx'\n"
+                "  Trigger automation:  domain='automation',   service='trigger',         entity_id='automation.xxx'\n"
+                "  Send notification:   domain='notify',       service='mobile_app_phone', message='Hello', title='Alert'"
             ),
             inputSchema={
                 "type": "object",
                 "properties": {
                     "domain": {
                         "type": "string",
-                        "description": "Service domain, e.g. 'light', 'switch', 'climate', 'media_player', 'script', 'automation'.",
+                        "description": "Service domain, e.g. 'light', 'switch', 'climate', 'media_player', 'notify', 'script', 'automation'.",
                     },
                     "service": {
                         "type": "string",
-                        "description": "Service name, e.g. 'turn_on', 'turn_off', 'toggle', 'set_temperature', 'media_pause'.",
+                        "description": "Service name, e.g. 'turn_on', 'turn_off', 'toggle', 'set_temperature', 'media_pause', 'mobile_app_phone'.",
                     },
                     "entity_id": {
                         "type": "string",
-                        "description": "Target entity ID, e.g. 'light.coffee_bar_light'. Use list_entities to find this if unknown.",
+                        "description": "Target entity ID, e.g. 'light.coffee_bar_light'. Required for most services. Omit for services that don't target a specific entity (e.g. notify).",
                     },
                 },
-                "required": ["domain", "service", "entity_id"],
+                "required": ["domain", "service"],
                 "additionalProperties": True,
             },
         ),
