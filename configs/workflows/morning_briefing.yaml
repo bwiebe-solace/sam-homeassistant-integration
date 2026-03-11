@@ -1,0 +1,116 @@
+log:
+  stdout_log_level: INFO
+  log_file_level: DEBUG
+  log_file: morning-briefing.log
+
+!include ../../shared_config.yaml
+
+apps:
+  - name: morning_briefing_workflow
+    app_base_path: .
+    app_module: solace_agent_mesh.workflow.app
+
+    broker:
+      <<: *broker_connection
+
+    app_config:
+      namespace: ${NAMESPACE}
+      name: "MorningBriefing"
+      display_name: "Morning Briefing"
+
+      max_workflow_execution_time_seconds: 180
+      default_node_timeout_seconds: 90
+
+      workflow:
+        version: "1.0.0"
+        description: |
+          Compiles a morning briefing covering today's calendar events, current
+          house state, air quality summary, and any open doors or active alerts.
+          Delivers the briefing via a Home Assistant notify service.
+
+        input_schema:
+          type: object
+          properties:
+            notify_service:
+              type: string
+              description: >
+                HA notify service to deliver the briefing
+                (e.g. notify.mobile_app_phone).
+                Use notify.persistent_notification to show it in the HA UI.
+          required: [notify_service]
+
+        output_schema:
+          type: object
+          properties:
+            confirmation:
+              type: string
+              description: "Confirmation that the briefing was sent"
+          required: [confirmation]
+
+        nodes:
+          - id: briefing
+            type: agent
+            agent_name: "HomeAssistantAgent"
+            input:
+              notify_service: "{{workflow.input.notify_service}}"
+            instruction: |
+              Compile a concise morning briefing and deliver it as a notification.
+              Work through each section below, then combine into one message.
+
+              ## Section 1 — Calendar
+              Call get_calendar_events with days_ahead=1 to get today's events.
+              List any events with their time. If none, note "No events today."
+
+              ## Section 2 — House State
+              Query list_entities for domain='light' (state='on') and
+              domain='climate'. Report which lights are on (use group/area names,
+              not individual bulbs) and the current thermostat setpoint and mode.
+              If no lights are on, say so briefly.
+
+              ## Section 3 — Air Quality
+              Search for Airthings sensor entities using list_entities with
+              name_filter='airthings' or name_filter='radon'. If found, call
+              get_entity_state for the radon (1-day average) and CO₂ sensors.
+              Report the values with a brief status (good / elevated / poor).
+              If the device is unavailable, note that it is offline.
+
+              ## Section 4 — Alerts
+              Check for any open/detected states on door, window, and water leak
+              sensors using list_entities(domain='binary_sensor').
+              Report any doors/windows that are open and any active water leak
+              alerts. Skip if all clear.
+
+              ## Deliver
+              Combine all four sections into a single notification message titled
+              "Good Morning". Call call_service with:
+                domain: the part of notify_service before the dot
+                service: the part after the dot
+                service_data:
+                  title: "Good Morning"
+                  message: <the combined briefing>
+
+              Return a brief confirmation of what was sent.
+            output_schema_override:
+              type: object
+              properties:
+                confirmation:
+                  type: string
+                  description: "One-sentence confirmation"
+              required: [confirmation]
+
+        output_mapping:
+          confirmation: "{{briefing.output.confirmation}}"
+
+        skills:
+          - id: morning_briefing
+            name: "Morning Briefing"
+            description: >
+              Delivers a morning briefing with today's calendar events, house
+              state, air quality, and any open door or water alerts
+            tags: ["briefing", "morning", "routine", "notify"]
+
+      session_service: *session_service
+      artifact_service: *artifact_service
+
+      agent_card_publishing: { interval_seconds: 10 }
+      agent_discovery: { enabled: true }

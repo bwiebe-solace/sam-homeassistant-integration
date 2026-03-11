@@ -1,0 +1,135 @@
+log:
+  stdout_log_level: INFO
+  log_file_level: DEBUG
+  log_file: air-quality-report.log
+
+!include ../../shared_config.yaml
+
+apps:
+  - name: air_quality_report_workflow
+    app_base_path: .
+    app_module: solace_agent_mesh.workflow.app
+
+    broker:
+      <<: *broker_connection
+
+    app_config:
+      namespace: ${NAMESPACE}
+      name: "AirQualityReport"
+      display_name: "Air Quality Report"
+
+      max_workflow_execution_time_seconds: 300
+      default_node_timeout_seconds: 120
+
+      workflow:
+        version: "1.0.0"
+        description: |
+          Generates an air quality report from Airthings and other air quality
+          sensors. Retrieves current readings and recent history for radon,
+          CO₂, humidity, VOCs, and temperature. Produces a trend chart for
+          radon and sends a plain-English summary notification. Flags any
+          readings that exceed health guidelines.
+
+        input_schema:
+          type: object
+          properties:
+            notify_service:
+              type: string
+              description: >
+                HA notify service to deliver the report
+                (e.g. notify.mobile_app_phone).
+                Use notify.persistent_notification to show it in the HA UI.
+            hours_ago:
+              type: integer
+              default: 48
+              description: "Hours of radon history to analyse. Defaults to 48."
+          required: [notify_service]
+
+        output_schema:
+          type: object
+          properties:
+            confirmation:
+              type: string
+              description: "Confirmation that the report was sent"
+          required: [confirmation]
+
+        nodes:
+          - id: report
+            type: agent
+            agent_name: "HomeAssistantAgent"
+            input:
+              notify_service: "{{workflow.input.notify_service}}"
+              hours_ago: "{{workflow.input.hours_ago}}"
+            instruction: |
+              Generate an air quality report and deliver it as a notification.
+
+              Step 1 — Find air quality sensors:
+              Call list_entities with name_filter='airthings' to find Airthings
+              sensors. Also try name_filter='radon', name_filter='co2', and
+              domain='sensor' with name_filter='air'. Collect all relevant
+              entity IDs for radon, CO₂, humidity, VOC, and temperature sensors.
+
+              Step 2 — Check device availability:
+              If the sensors are unavailable, note the device is offline and skip
+              to Step 5. Do not abort — offline status is itself a useful report.
+
+              Step 3 — Current readings:
+              Call get_entity_state for each available sensor. Record the value
+              and unit for: radon 1-day average, radon long-term average, CO₂,
+              humidity, VOC, and temperature.
+
+              Step 4 — Radon trend analysis:
+              Call get_entity_history for the radon 1-day average sensor with
+              hours_ago=hours_ago and significant_changes_only=false.
+              Pass the result to analyze_timeseries, then call generate_chart
+              to produce a trend chart. Save it with save_artifact.
+
+              Step 5 — Assess health status:
+              Apply these thresholds:
+              - Radon 1-day: < 100 Bq/m³ = Good, 100–300 = Elevated, > 300 = High Risk
+              - Radon long-term: < 100 Bq/m³ = Good, 100–300 = Elevated, > 300 = High Risk
+              - CO₂: < 800 ppm = Good, 800–1200 = Elevated, > 1200 = Poor
+              - Humidity: 30–60% = Good, outside range = Note it
+              For each reading, assign a status label.
+
+              Step 6 — Compose and send:
+              Build a notification with:
+              - Current readings table with status labels
+              - One-sentence trend observation for radon (rising/falling/stable)
+              - Any recommended actions if readings are elevated
+              - If device is offline: state this clearly and recommend checking
+                Bluetooth connectivity
+
+              Send via call_service:
+                domain: the part of notify_service before the dot
+                service: the part after the dot
+                service_data:
+                  title: "Air Quality Report"
+                  message: <the report>
+
+              Return a brief confirmation.
+            output_schema_override:
+              type: object
+              properties:
+                confirmation:
+                  type: string
+                  description: "One-sentence confirmation"
+              required: [confirmation]
+
+        output_mapping:
+          confirmation: "{{report.output.confirmation}}"
+
+        skills:
+          - id: air_quality_report
+            name: "Air Quality Report"
+            description: >
+              Reports current radon, CO₂, humidity, and VOC readings from
+              Airthings and air quality sensors, with a trend chart and
+              health assessment
+            tags: ["air quality", "radon", "health", "airthings", "notify"]
+
+      session_service: *session_service
+      artifact_service: *artifact_service
+
+      agent_card_publishing: { interval_seconds: 10 }
+      agent_discovery: { enabled: true }

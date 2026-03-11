@@ -1,0 +1,126 @@
+log:
+  stdout_log_level: INFO
+  log_file_level: DEBUG
+  log_file: weekly-home-digest.log
+
+!include ../../shared_config.yaml
+
+apps:
+  - name: weekly_home_digest_workflow
+    app_base_path: .
+    app_module: solace_agent_mesh.workflow.app
+
+    broker:
+      <<: *broker_connection
+
+    app_config:
+      namespace: ${NAMESPACE}
+      name: "WeeklyHomeDigest"
+      display_name: "Weekly Home Digest"
+
+      max_workflow_execution_time_seconds: 300
+      default_node_timeout_seconds: 120
+
+      workflow:
+        version: "1.0.0"
+        description: |
+          Produces a weekly summary of home activity and health. Covers device
+          health (offline devices), air quality trend for the week, server room
+          temperature high/low, and notable automation activity from the logbook.
+          Delivers the digest via a Home Assistant notify service.
+
+        input_schema:
+          type: object
+          properties:
+            notify_service:
+              type: string
+              description: >
+                HA notify service to deliver the digest
+                (e.g. notify.mobile_app_phone).
+                Use notify.persistent_notification to show it in the HA UI.
+          required: [notify_service]
+
+        output_schema:
+          type: object
+          properties:
+            confirmation:
+              type: string
+              description: "Confirmation that the digest was sent"
+          required: [confirmation]
+
+        nodes:
+          - id: digest
+            type: agent
+            agent_name: "HomeAssistantAgent"
+            input:
+              notify_service: "{{workflow.input.notify_service}}"
+            instruction: |
+              Compile a weekly home digest and deliver it as a notification.
+              Work through each section, then combine into one message.
+
+              ## Section 1 — Device Health
+              Call list_entities with state='unavailable' (no domain filter).
+              Filter out infrastructure/network entities (unifi, ubiquiti, wifi,
+              router, update domain, device_tracker domain).
+              Report the count of unexpected offline devices. If zero, say
+              "All devices healthy ✅". Otherwise list the offline device names
+              grouped by domain.
+
+              ## Section 2 — Air Quality (7-Day Trend)
+              Find Airthings radon and CO₂ sensors using list_entities with
+              name_filter='airthings' or name_filter='radon'.
+              If available, call get_entity_history with hours_ago=168
+              (7 days) for the radon 1-day average sensor.
+              Report: average over the week, highest reading (and when),
+              lowest reading, and whether the trend is improving, worsening,
+              or stable. If the device is offline, note this.
+
+              ## Section 3 — Server Room Temperature
+              Find server room temperature sensors using list_entities with
+              name_filter='server room' and domain='sensor'.
+              Call get_entity_history with hours_ago=168 for the temperature
+              sensor. Report the week's high, low, and current temperature.
+              Flag if the high exceeded 28°C.
+
+              ## Section 4 — Automation Activity
+              Call get_logbook with hours_ago=168. Count how many times each
+              automation or script fired. List the top 5 most active automations
+              by name (not entity_id). Also note any automations that fired an
+              unusual number of times (>20 in a week) as potentially worth reviewing.
+
+              ## Deliver
+              Combine all four sections into a weekly digest notification.
+              Keep each section brief — bullet points or short sentences.
+
+              Send via call_service:
+                domain: the part of notify_service before the dot
+                service: the part after the dot
+                service_data:
+                  title: "Weekly Home Digest"
+                  message: <the combined digest>
+
+              Return a brief confirmation of what was sent.
+            output_schema_override:
+              type: object
+              properties:
+                confirmation:
+                  type: string
+                  description: "One-sentence confirmation"
+              required: [confirmation]
+
+        output_mapping:
+          confirmation: "{{digest.output.confirmation}}"
+
+        skills:
+          - id: weekly_home_digest
+            name: "Weekly Home Digest"
+            description: >
+              Weekly summary covering device health, 7-day air quality trend,
+              server room temperature, and most active automations
+            tags: ["weekly", "digest", "summary", "health", "notify"]
+
+      session_service: *session_service
+      artifact_service: *artifact_service
+
+      agent_card_publishing: { interval_seconds: 10 }
+      agent_discovery: { enabled: true }
