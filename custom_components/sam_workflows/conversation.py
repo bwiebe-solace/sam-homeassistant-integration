@@ -5,7 +5,6 @@ import json
 import logging
 import uuid
 
-from homeassistant.components import mqtt
 from homeassistant.components.conversation import (
     AssistantContent,
     ChatLog,
@@ -62,17 +61,18 @@ class SAMConversationEntity(ConversationEntity):
         pending: dict[str, asyncio.Future[str]] = self._entry_data[
             "pending_conversations"
         ]
+        manager = self._entry_data.get("mqtt_manager")
 
         session_id = user_input.conversation_id or str(uuid.uuid4())
         future: asyncio.Future[str] = self.hass.loop.create_future()
         pending[session_id] = future
 
-        await mqtt.async_publish(
-            self.hass,
-            f"{namespace}/ha/conversation/request",
-            json.dumps({"text": user_input.text, "session_id": session_id}),
-            qos=1,
-        )
+        if manager:
+            await manager.publish(
+                f"{namespace}/ha/conversation/request",
+                json.dumps({"text": user_input.text, "session_id": session_id}),
+                qos=1,
+            )
         _LOGGER.debug(
             "Sent to SAM — session=%s text=%r", session_id, user_input.text[:100]
         )

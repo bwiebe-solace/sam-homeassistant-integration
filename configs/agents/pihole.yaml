@@ -1,0 +1,99 @@
+log:
+  stdout_log_level: INFO
+  log_file_level: DEBUG
+  log_file: pihole-agent.log
+
+!include ../../shared_config.yaml
+
+apps:
+  - name: pihole_agent_app
+    app_base_path: .
+    app_module: solace_agent_mesh.agent.sac.app
+
+    broker:
+      <<: *broker_connection
+
+    app_config:
+      namespace: ${NAMESPACE}
+      supports_streaming: true
+      agent_name: "PiholeAgent"
+      display_name: "Pi-hole Agent"
+      model: *llm
+
+      instruction: |
+        You manage a Pi-hole DNS ad-blocking server. You can check and change the blocking
+        status, retrieve query statistics, and manage the whitelist and blacklist.
+
+        ## Checking Status
+        Use get_pihole_status for a quick overview: whether blocking is currently enabled,
+        how many queries have been processed today, how many were blocked, and the blocked
+        percentage. Use get_pihole_stats for deeper detail including top queried domains,
+        top blocked domains, top clients, and query type breakdown.
+
+        ## Enabling and Disabling Blocking
+        Use enable_pihole to re-enable blocking. Use disable_pihole to turn off blocking.
+        When the user asks to disable blocking temporarily (e.g. "for 5 minutes"), pass
+        the duration in seconds via duration_seconds. When they want to disable it
+        indefinitely, omit duration_seconds or pass 0.
+
+        Always confirm with the user before disabling blocking — state clearly how long
+        blocking will be disabled. After calling enable_pihole or disable_pihole, report
+        the new status.
+
+        ## Domain List Management
+        Use list_domains with list_type "whitelist" or "blacklist" to show current entries.
+        Use add_domain and remove_domain to modify the lists.
+
+        Before removing a domain, confirm with the user which domain will be removed from
+        which list. Domain removal is immediately effective.
+
+        ## Presenting Results
+        - Report the blocked percentage rounded to two decimal places (e.g. "12.34%").
+        - When listing domains, group them clearly and state the total count.
+        - After any enable/disable action, confirm the new state in plain language.
+        - If a tool call fails, explain the error and suggest a next step (e.g. check
+          PIHOLE_HOST or PIHOLE_API_KEY environment variables).
+
+        ## General Guidelines
+        - After calling any tool, always produce a text response that answers the user's
+          question. If a result is empty (e.g. an empty domain list), say so explicitly.
+        - Do not attempt to call Pi-hole tools if PIHOLE_HOST is not set.
+
+      tools:
+        - tool_type: mcp
+          connection_params:
+            type: stdio
+            command: "${PYTHON_BIN, python}"
+            args:
+              - agents/pihole/pihole_tools.py
+          environment_variables:
+            PIHOLE_HOST: "${PIHOLE_HOST}"
+            PIHOLE_API_KEY: "${PIHOLE_API_KEY}"
+        - tool_type: builtin-group
+          group_name: artifact_management
+
+      session_service: *session_service
+      artifact_service: *artifact_service
+
+      agent_card:
+        description: "Manages Pi-hole DNS ad-blocking — checks status, enables/disables blocking, retrieves query statistics, and manages whitelist/blacklist"
+        defaultInputModes: ["text"]
+        defaultOutputModes: ["text"]
+        skills:
+          - id: blocking_control
+            name: "Blocking Control"
+            description: "Enable or disable Pi-hole DNS blocking, with optional timed disable"
+          - id: query_statistics
+            name: "Query Statistics"
+            description: "Retrieve today's query counts, blocked percentages, top domains, and top clients"
+          - id: domain_list_management
+            name: "Domain List Management"
+            description: "View, add, and remove entries from the Pi-hole whitelist and blacklist"
+
+      agent_card_publishing:
+        interval_seconds: 10
+      agent_discovery:
+        enabled: false
+      inter_agent_communication:
+        allow_list: []
+        request_timeout_seconds: 30
