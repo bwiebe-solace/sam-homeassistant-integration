@@ -1,0 +1,97 @@
+log:
+  stdout_log_level: INFO
+  log_file_level: DEBUG
+  log_file: evening-routine.log
+
+!include ../../shared_config.yaml
+
+apps:
+  - name: evening_routine_workflow
+    app_base_path: .
+    app_module: solace_agent_mesh.workflow.app
+
+    broker:
+      <<: *broker_connection
+
+    app_config:
+      namespace: ${NAMESPACE}
+      name: "EveningRoutine"
+      display_name: "Evening Routine"
+
+      max_workflow_execution_time_seconds: 120
+      default_node_timeout_seconds: 60
+
+      workflow:
+        version: "1.0.0"
+        description: |
+          Runs the evening wind-down routine: dims all lights to a comfortable
+          level, sets the thermostat to a sleep-friendly temperature, and stops
+          any active media. Accepts optional overrides for brightness and temperature.
+
+        input_schema:
+          type: object
+          properties:
+            brightness_pct:
+              type: integer
+              default: 20
+              description: "Light brightness percentage (0–100). Defaults to 20."
+            temperature_c:
+              type: number
+              default: 20.0
+              description: "Thermostat target temperature in Celsius. Defaults to 20."
+
+        output_schema:
+          type: object
+          properties:
+            result:
+              type: string
+              description: "Summary of actions taken during the routine"
+          required: [result]
+
+        nodes:
+          - id: run_routine
+            type: agent
+            agent_name: "HomeAssistantAgent"
+            input:
+              brightness_pct: "{{workflow.input.brightness_pct}}"
+              temperature_c: "{{workflow.input.temperature_c}}"
+            instruction: |
+              Run the evening wind-down routine using the provided parameters:
+
+              1. Lights: Find all light entities using list_entities(domain='light').
+                 For each group or area light that is on, dim it to brightness_pct
+                 using call_service with service='light.turn_on' and
+                 brightness_pct=<value>. Skip individual bulbs that are part of a group.
+
+              2. Climate: Find all climate entities using list_entities(domain='climate').
+                 Set each to temperature_c using call_service with
+                 service='climate.set_temperature'.
+
+              3. Media: Find active media players using list_entities(domain='media_player',
+                 state='playing'). Pause each using call_service with
+                 service='media_player.media_pause'.
+
+              Complete each step even if a previous step partially fails.
+              Return a brief confirmation of what was done.
+            output_schema_override:
+              type: object
+              properties:
+                result:
+                  type: string
+                  description: "Short summary of actions taken"
+              required: [result]
+
+        output_mapping:
+          result: "{{run_routine.output.result}}"
+
+        skills:
+          - id: evening_routine
+            name: "Evening Routine"
+            description: "Dims lights, adjusts thermostat, and stops media for wind-down"
+            tags: ["routine", "lights", "climate"]
+
+      session_service: *session_service
+      artifact_service: *artifact_service
+
+      agent_card_publishing: { interval_seconds: 10 }
+      agent_discovery: { enabled: true }

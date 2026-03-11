@@ -1,0 +1,71 @@
+log:
+  stdout_log_level: INFO
+  log_file_level: DEBUG
+  log_file: house-status-report.log
+
+!include ../../shared_config.yaml
+
+apps:
+  - name: house_status_report_workflow
+    app_base_path: .
+    app_module: solace_agent_mesh.workflow.app
+
+    broker:
+      <<: *broker_connection
+
+    app_config:
+      namespace: ${NAMESPACE}
+      name: "HouseStatusReport"
+      display_name: "House Status Report"
+
+      max_workflow_execution_time_seconds: 120
+      default_node_timeout_seconds: 60
+
+      workflow:
+        version: "1.0.0"
+        description: |
+          Queries the current state of the smart home and returns a formatted
+          status summary covering lights, climate, media players, and notable
+          switches or binary sensors.
+
+        output_schema:
+          type: object
+          properties:
+            summary:
+              type: string
+              description: "Formatted human-readable house status report"
+          required: [summary]
+
+        nodes:
+          - id: get_status
+            type: agent
+            agent_name: "HomeAssistantAgent"
+            instruction: |
+              Compile a concise house status report.
+              Query the following domains in order: light, climate, media_player, switch.
+              For each domain, use list_entities to find active/on devices.
+              Organise the results into clear categories. Omit empty categories.
+              Ignore all infrastructure, network, and diagnostic entities.
+              Return a friendly, readable summary — no raw entity IDs.
+            output_schema_override:
+              type: object
+              properties:
+                summary:
+                  type: string
+                  description: "Formatted status summary, organised by category"
+              required: [summary]
+
+        output_mapping:
+          summary: "{{get_status.output.summary}}"
+
+        skills:
+          - id: house_status
+            name: "House Status"
+            description: "Returns a formatted summary of the current smart home state"
+            tags: ["status", "overview"]
+
+      session_service: *session_service
+      artifact_service: *artifact_service
+
+      agent_card_publishing: { interval_seconds: 10 }
+      agent_discovery: { enabled: true }

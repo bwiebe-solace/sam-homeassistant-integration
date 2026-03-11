@@ -1,0 +1,98 @@
+log:
+  stdout_log_level: INFO
+  log_file_level: DEBUG
+  log_file: create-automation.log
+
+!include ../../shared_config.yaml
+
+apps:
+  - name: create_automation_workflow
+    app_base_path: .
+    app_module: solace_agent_mesh.workflow.app
+
+    broker:
+      <<: *broker_connection
+
+    app_config:
+      namespace: ${NAMESPACE}
+      name: "CreateAutomation"
+      display_name: "Create Automation"
+
+      max_workflow_execution_time_seconds: 180
+      default_node_timeout_seconds: 120
+
+      workflow:
+        version: "1.0.0"
+        description: |
+          Creates a new Home Assistant automation from a plain-English description.
+          Discovers relevant entities automatically — no entity IDs required.
+          Returns the automation alias and a confirmation once it is saved.
+
+        input_schema:
+          type: object
+          properties:
+            description:
+              type: string
+              description: >
+                Plain-English description of the automation to create.
+                Example: "Turn on the porch light at sunset and turn it off at midnight."
+          required: [description]
+
+        output_schema:
+          type: object
+          properties:
+            automation_alias:
+              type: string
+              description: "Alias of the newly created automation"
+            confirmation:
+              type: string
+              description: "Confirmation message describing what was created"
+          required: [automation_alias, confirmation]
+
+        nodes:
+          - id: create
+            type: agent
+            agent_name: "HomeAssistantAgent"
+            input:
+              description: "{{workflow.input.description}}"
+            instruction: |
+              Create a new Home Assistant automation based on the description provided.
+
+              Follow this process:
+              1. Parse the description to understand the trigger, any conditions,
+                 and the desired actions.
+              2. Use list_entities to discover entity IDs for any devices mentioned
+                 in the description. Search by keyword — do NOT guess entity IDs.
+              3. Build the automation config with at minimum:
+                 - alias: a short, descriptive name (snake_case words separated by spaces)
+                 - trigger: list of trigger definitions
+                 - action: list of action definitions
+                 Add condition or mode if appropriate.
+              4. Call create_automation with the completed config.
+              5. Return the alias that was used and a brief confirmation message.
+            output_schema_override:
+              type: object
+              properties:
+                automation_alias:
+                  type: string
+                  description: "Alias of the newly created automation"
+                confirmation:
+                  type: string
+                  description: "Confirmation of what was created"
+              required: [automation_alias, confirmation]
+
+        output_mapping:
+          automation_alias: "{{create.output.automation_alias}}"
+          confirmation: "{{create.output.confirmation}}"
+
+        skills:
+          - id: create_automation
+            name: "Create Automation"
+            description: "Creates a HA automation from a plain-English description"
+            tags: ["automation", "configuration"]
+
+      session_service: *session_service
+      artifact_service: *artifact_service
+
+      agent_card_publishing: { interval_seconds: 10 }
+      agent_discovery: { enabled: true }
