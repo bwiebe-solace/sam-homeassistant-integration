@@ -1,0 +1,126 @@
+log:
+  stdout_log_level: INFO
+  log_file_level: DEBUG
+  log_file: security-roundup.log
+
+!include ../../shared_config.yaml
+
+apps:
+  - name: security_roundup_workflow
+    app_base_path: .
+    app_module: solace_agent_mesh.workflow.app
+
+    broker:
+      <<: *broker_connection
+
+    app_config:
+      namespace: ${NAMESPACE}
+      name: "SecurityRoundup"
+      display_name: "Security Roundup"
+
+      max_workflow_execution_time_seconds: 180
+      default_node_timeout_seconds: 90
+
+      workflow:
+        version: "1.0.0"
+        description: |
+          Checks the security state of the home: door and window sensors,
+          water leak sensors, garage door, and recent logbook activity for
+          any security-relevant events. Sends a concise notification summary.
+          If everything is secure, confirms that clearly.
+
+        input_schema:
+          type: object
+          properties:
+            notify_service:
+              type: string
+              description: >
+                HA notify service to deliver the summary
+                (e.g. notify.mobile_app_phone).
+                Use notify.persistent_notification to show it in the HA UI.
+            logbook_hours:
+              type: integer
+              default: 8
+              description: "How many hours of logbook history to review. Defaults to 8."
+          required: [notify_service]
+
+        output_schema:
+          type: object
+          properties:
+            confirmation:
+              type: string
+              description: "Confirmation that the security roundup was sent"
+          required: [confirmation]
+
+        nodes:
+          - id: roundup
+            type: agent
+            agent_name: "HomeAssistantAgent"
+            input:
+              notify_service: "{{workflow.input.notify_service}}"
+              logbook_hours: "{{workflow.input.logbook_hours}}"
+            instruction: |
+              Perform a security roundup of the home and deliver a notification.
+
+              Step 1 — Doors and windows:
+              Call list_entities(domain='binary_sensor') and filter for sensors
+              with device_class 'door', 'window', or 'opening' that are in the
+              'on' (open/detected) state. List any that are open.
+
+              Step 2 — Garage door:
+              Call list_entities with name_filter='garage' and domain='cover'
+              or name_filter='garage' and domain='binary_sensor'. Report the
+              garage door state (open/closed).
+
+              Step 3 — Water leak sensors:
+              Call list_entities(domain='binary_sensor') and filter for
+              device_class 'moisture' or name_filter='leak' or name_filter='water'.
+              Report any that are detecting moisture (state='on').
+
+              Step 4 — Recent logbook activity:
+              Call get_logbook with hours_ago=logbook_hours. Look for entries
+              related to: door opened/closed, motion detected, water leak,
+              alarm, garage. List any notable events with their time.
+
+              Step 5 — Compose and send:
+              Build the notification message:
+              - **Doors/Windows:** List any open, or "All closed ✅"
+              - **Garage:** State (open/closed)
+              - **Water:** Any alerts, or "No leaks detected ✅"
+              - **Recent Activity:** 2–3 notable events, or "Nothing unusual"
+
+              If everything is secure and quiet, a single line
+              "🔒 All secure — no issues detected." is sufficient.
+
+              Send via call_service:
+                domain: the part of notify_service before the dot
+                service: the part after the dot
+                service_data:
+                  title: "Security Roundup"
+                  message: <the summary>
+
+              Return a brief confirmation.
+            output_schema_override:
+              type: object
+              properties:
+                confirmation:
+                  type: string
+                  description: "One-sentence confirmation"
+              required: [confirmation]
+
+        output_mapping:
+          confirmation: "{{roundup.output.confirmation}}"
+
+        skills:
+          - id: security_roundup
+            name: "Security Roundup"
+            description: >
+              Checks door/window sensors, garage, water leak sensors, and recent
+              logbook activity, then sends a security status summary
+            tags: ["security", "doors", "water", "garage", "notify"]
+
+      session_service: *session_service
+      artifact_service: *artifact_service
+
+      agent_card_publishing: { interval_seconds: 10 }
+      agent_discovery: { enabled: true }

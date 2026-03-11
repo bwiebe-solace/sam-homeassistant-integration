@@ -1,0 +1,113 @@
+log:
+  stdout_log_level: INFO
+  log_file_level: DEBUG
+  log_file: device-health-check.log
+
+!include ../../shared_config.yaml
+
+apps:
+  - name: device_health_check_workflow
+    app_base_path: .
+    app_module: solace_agent_mesh.workflow.app
+
+    broker:
+      <<: *broker_connection
+
+    app_config:
+      namespace: ${NAMESPACE}
+      name: "DeviceHealthCheck"
+      display_name: "Device Health Check"
+
+      max_workflow_execution_time_seconds: 180
+      default_node_timeout_seconds: 90
+
+      workflow:
+        version: "1.0.0"
+        description: |
+          Scans all Home Assistant entities for unavailable or unknown state and
+          reports any unexpected offline devices. Infrastructure entities
+          (network hardware, update entities, connectivity sensors) are excluded.
+          Sends a summary notification; if everything is healthy, confirms that too.
+
+        input_schema:
+          type: object
+          properties:
+            notify_service:
+              type: string
+              description: >
+                HA notify service to deliver the report
+                (e.g. notify.mobile_app_phone).
+                Use notify.persistent_notification to show it in the HA UI.
+          required: [notify_service]
+
+        output_schema:
+          type: object
+          properties:
+            confirmation:
+              type: string
+              description: "Confirmation that the health report was sent"
+          required: [confirmation]
+
+        nodes:
+          - id: check
+            type: agent
+            agent_name: "HomeAssistantAgent"
+            input:
+              notify_service: "{{workflow.input.notify_service}}"
+            instruction: |
+              Perform a device health check across the smart home.
+
+              Step 1 — Find unavailable entities:
+              Call list_entities with state='unavailable' and no domain filter.
+              Also call list_entities with state='unknown' and no domain filter.
+              Combine the results.
+
+              Step 2 — Filter out expected/infrastructure items:
+              Remove from the list any entity whose name or entity_id contains:
+              unifi, ubiquiti, wifi, router, access_point, modem, update,
+              device_tracker, connectivity. Also remove entities in the
+              'update' domain and 'device_tracker' domain.
+
+              Step 3 — Group and summarise:
+              Group the remaining offline entities by their domain
+              (e.g. sensor, light, switch, binary_sensor, climate, media_player).
+              Count how many are offline per domain.
+
+              Step 4 — Compose and send notification:
+              If no unexpected offline devices are found, the message is:
+                "✅ All devices healthy — nothing offline."
+              Otherwise, list the offline devices grouped by domain, using
+              friendly names only (no entity IDs in the message).
+
+              Send via call_service:
+                domain: the part of notify_service before the dot
+                service: the part after the dot
+                service_data:
+                  title: "Device Health Check"
+                  message: <the report>
+
+              Return a brief confirmation.
+            output_schema_override:
+              type: object
+              properties:
+                confirmation:
+                  type: string
+                  description: "One-sentence confirmation"
+              required: [confirmation]
+
+        output_mapping:
+          confirmation: "{{check.output.confirmation}}"
+
+        skills:
+          - id: device_health_check
+            name: "Device Health Check"
+            description: >
+              Scans all entities for unavailable or unknown state and sends a
+              summary of any unexpected offline devices
+            tags: ["health", "devices", "offline", "notify"]
+
+      session_service: *session_service
+      artifact_service: *artifact_service
+
+      agent_card_publishing: { interval_seconds: 10 }
+      agent_discovery: { enabled: true }
