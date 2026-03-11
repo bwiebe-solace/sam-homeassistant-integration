@@ -17,6 +17,7 @@ apps:
       namespace: ${NAMESPACE}
       gateway_id: ha-mqtt-gateway
       default_agent_name: OrchestratorAgent
+      default_user_identity: homeassistant
 
       session_service: *session_service
       artifact_service: *artifact_service
