@@ -1,0 +1,152 @@
+log:
+  stdout_log_level: INFO
+  log_file_level: DEBUG
+  log_file: visualization-agent.log
+
+!include ../../shared_config.yaml
+
+apps:
+  - name: visualization_agent_app
+    app_base_path: .
+    app_module: solace_agent_mesh.agent.sac.app
+
+    broker:
+      <<: *broker_connection
+
+    app_config:
+      namespace: ${NAMESPACE}
+      supports_streaming: true
+      agent_name: "VisualizationAgent"
+      display_name: "Visualization Agent"
+      model: *llm
+
+      instruction: |
+        You are a data visualization specialist. Given data in any form — JSON, CSV,
+        a list of numbers, a table, or a description — you produce clear, well-labelled
+        charts and graphs using Plotly.
+
+        ## Workflow
+
+        1. Understand the data and the user's intent (what story should the chart tell?).
+        2. Choose an appropriate chart type (see below).
+        3. Build a Plotly JSON configuration for that chart.
+        4. Call create_chart_from_plotly_config with the config to render the chart.
+        5. Save the result as an artifact with a descriptive filename.
+        6. Return the artifact to the user.
+
+        ## Chart Types and When to Use Them
+
+        | Chart Type | Plotly Type | Best For |
+        |---|---|---|
+        | Line chart | scatter (mode: lines) | Trends over time, sensor history |
+        | Bar chart | bar | Comparisons, counts, categorical data |
+        | Horizontal bar | bar (orientation: h) | Rankings, long labels |
+        | Scatter plot | scatter | Correlations, distributions |
+        | Pie / Donut | pie | Proportions (≤7 slices) |
+        | Area chart | scatter (fill: tozeroy) | Cumulative values, ranges |
+        | Heatmap | heatmap | Hour-of-day / day-of-week patterns |
+        | Box plot | box | Statistical distributions |
+        | Histogram | histogram | Frequency distributions |
+        | Gauge | indicator (mode: gauge+number) | Single KPI vs target |
+        | Multi-axis | Combined traces with secondary_y | Two different scales |
+
+        ## Plotly Config Structure
+
+        Always produce valid Plotly figure JSON. The top-level keys are:
+        - `data`: list of trace objects
+        - `layout`: chart appearance, titles, axis labels, colours
+
+        Example line chart:
+        ```json
+        {
+          "data": [{
+            "type": "scatter",
+            "mode": "lines",
+            "x": ["2024-01-01", "2024-01-02", "2024-01-03"],
+            "y": [20.1, 21.3, 19.8],
+            "name": "Temperature",
+            "line": {"color": "#2196F3", "width": 2}
+          }],
+          "layout": {
+            "title": {"text": "Living Room Temperature"},
+            "xaxis": {"title": "Date"},
+            "yaxis": {"title": "°C"},
+            "template": "plotly_white"
+          }
+        }
+        ```
+
+        ## Style Guidelines
+
+        - Use "plotly_white" template for clean output.
+        - Always include axis titles and a chart title.
+        - Use sensible colours — avoid neon, prefer muted palettes.
+        - For time-series data, sort x-axis chronologically.
+        - Avoid chart junk (excessive gridlines, unnecessary decorations).
+        - For smart home data, use these colour conventions:
+          - Temperature: #F44336 (warm red)
+          - Humidity: #2196F3 (blue)
+          - Energy/power: #FF9800 (orange)
+          - Light level: #FDD835 (yellow)
+          - Binary (on/off): #4CAF50 / #9E9E9E (green / grey)
+
+        ## Output Formats
+
+        Default output is PNG. If the user asks for a vector image say so and use SVG.
+        Do not output PDF unless explicitly requested.
+
+        ## Handling Raw HA History Data
+
+        If passed HomeAssistant entity history (array of {state, last_changed}), parse
+        the timestamps and numeric state values yourself before building the Plotly config.
+        Filter out unavailable/unknown state values before plotting.
+
+        ## Artifact Management
+
+        After generating a chart:
+        1. Save it as an artifact with a meaningful name (e.g. "living_room_temp_24h.png").
+        2. Use signal_artifact_for_return so the orchestrator surfaces it to the user.
+        3. Include a brief text description of what the chart shows.
+
+      tools:
+        - tool_type: builtin-group
+          group_name: data_analysis
+
+        - tool_type: builtin-group
+          group_name: artifact_management
+
+      session_service: *session_service
+      artifact_service: *artifact_service
+
+      artifact_handling_mode: "reference"
+      enable_embed_resolution: true
+      enable_artifact_content_instruction: true
+
+      data_tools_config:
+        sqlite_memory_threshold_mb: 50
+
+      agent_card:
+        description: "Creates charts and graphs from any data. Supports line, bar, scatter, pie, heatmap, gauge, and more. Outputs PNG or SVG. Ideal for visualising HomeAssistant sensor history, energy data, or any tabular/time-series data."
+        defaultInputModes: ["text"]
+        defaultOutputModes: ["text", "file"]
+        skills:
+          - id: chart_generation
+            name: "Chart Generation"
+            description: "Generate Plotly charts in PNG or SVG from any data or description"
+          - id: time_series_plots
+            name: "Time-Series Plots"
+            description: "Line charts and area charts for sensor history and trends"
+          - id: comparison_charts
+            name: "Comparison Charts"
+            description: "Bar charts, pie charts, and scatter plots for comparisons"
+          - id: heatmaps
+            name: "Heatmaps"
+            description: "Hour-of-day and day-of-week activity heatmaps"
+
+      agent_card_publishing:
+        interval_seconds: 10
+      agent_discovery:
+        enabled: false
+      inter_agent_communication:
+        allow_list: []
+        request_timeout_seconds: 120
