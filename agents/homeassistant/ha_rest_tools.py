@@ -45,6 +45,7 @@ server process is running, which is the same lifetime as the agent session.  Thi
 
 import asyncio
 import json
+import logging
 import os
 import re
 import time
@@ -73,6 +74,14 @@ _EntityCacheKey = tuple[str, str, str]
 _ENTITY_CACHE: dict[_EntityCacheKey, tuple[str, float]] = {}
 _ENTITY_CACHE_TTL: float = float(os.environ.get("HA_ENTITY_CACHE_TTL_SECONDS", "300"))
 
+_cache_log = logging.getLogger("entity_cache")
+if os.environ.get("HA_ENTITY_CACHE_LOG", "false").lower() == "true":
+    _cache_log.setLevel(logging.DEBUG)
+    _cache_log.propagate = False
+    _h = logging.FileHandler("entity-cache.log")
+    _h.setFormatter(logging.Formatter("%(asctime)s %(message)s"))
+    _cache_log.addHandler(_h)
+
 
 def _cache_key(domain: str | None, state: str | None, name_filter: str | None) -> _EntityCacheKey:
     return (domain or "", state or "", (name_filter or "").lower())
@@ -82,11 +91,14 @@ def _cache_get(key: _EntityCacheKey) -> str | None:
     """Return the cached JSON string if the entry exists and is still fresh, else None."""
     entry = _ENTITY_CACHE.get(key)
     if entry is None:
+        _cache_log.debug("MISS    %s", key)
         return None
     result, expires = entry
     if time.monotonic() > expires:
         del _ENTITY_CACHE[key]
+        _cache_log.debug("EXPIRED %s", key)
         return None
+    _cache_log.debug("HIT     %s", key)
     return result
 
 
