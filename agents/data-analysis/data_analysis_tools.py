@@ -18,10 +18,14 @@ import base64
 import io
 import json
 
+from typing import Any
+
 import matplotlib
 import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
+from matplotlib.axes import Axes
+from matplotlib.figure import Figure
 from mcp.server import Server
 from mcp.server.stdio import stdio_server
 from mcp import types
@@ -213,7 +217,7 @@ async def list_tools() -> list[types.Tool]:
 
 
 @server.call_tool()
-async def call_tool(name: str, arguments: dict) -> list[types.TextContent]:
+async def call_tool(name: str, arguments: dict[str, Any]) -> list[types.TextContent]:
     try:
         if name == "analyze_timeseries":
             result = _analyze_timeseries(arguments)
@@ -228,13 +232,13 @@ async def call_tool(name: str, arguments: dict) -> list[types.TextContent]:
         else:
             raise ValueError(f"Unknown tool: {name}")
         return [types.TextContent(type="text", text=json.dumps(result, indent=2))]
-    except Exception as exc:
+    except Exception as exc:  # pylint: disable=broad-exception-caught
         return [types.TextContent(type="text", text=json.dumps({"error": str(exc)}))]
 
 
 # ── Tool implementations ──────────────────────────────────────────────────────
 
-def _analyze_timeseries(args: dict) -> dict:
+def _analyze_timeseries(args: dict[str, Any]) -> dict[str, Any]:
     df = _parse_history(args["data"])
     label = args.get("entity_label", "entity")
 
@@ -323,7 +327,7 @@ def _otsu_threshold(values: np.ndarray) -> float:
     return float(best_thresh)
 
 
-def _detect_active_periods(args: dict) -> dict:
+def _detect_active_periods(args: dict[str, Any]) -> dict[str, Any]:
     df = _parse_history(args["data"])
     if df.empty or not _is_numeric(df):
         return {"error": "detect_active_periods requires numeric sensor data."}
@@ -396,7 +400,7 @@ def _detect_active_periods(args: dict) -> dict:
     }
 
 
-def _detect_anomalies(args: dict) -> dict:
+def _detect_anomalies(args: dict[str, Any]) -> dict[str, Any]:
     df = _parse_history(args["data"])
     if df.empty or not _is_numeric(df):
         return {"error": "detect_anomalies requires numeric sensor data."}
@@ -463,7 +467,7 @@ def _detect_anomalies(args: dict) -> dict:
     }
 
 
-def _find_daily_patterns(args: dict) -> dict:
+def _find_daily_patterns(args: dict[str, Any]) -> dict[str, Any]:
     df = _parse_history(args["data"])
     if df.empty:
         return {"error": "No data points found in the provided history."}
@@ -489,7 +493,6 @@ def _find_daily_patterns(args: dict) -> dict:
     peak_hours = [h for h, v in enumerate(hourly_avgs) if v >= threshold_75]
 
     max_val = max(hourly_avgs) if hourly_avgs else 0
-    min_val = min(hourly_avgs) if hourly_avgs else 0
     if max_val > 0:
         peak_time = f"{peak_hours[0]:02d}:00–{peak_hours[-1]+1:02d}:00" if peak_hours else "N/A"
         dominant_pattern = f"Peak activity typically between {peak_time}."
@@ -504,7 +507,7 @@ def _find_daily_patterns(args: dict) -> dict:
     }
 
 
-def _generate_chart(args: dict) -> dict:
+def _generate_chart(args: dict[str, Any]) -> dict[str, Any]:
     df = _parse_history(args["data"])
     chart_type = args["chart_type"]
     title = args["title"]
@@ -550,7 +553,7 @@ def _generate_chart(args: dict) -> dict:
     }
 
 
-def _chart_timeseries(ax, df: pd.DataFrame, threshold=None):
+def _chart_timeseries(ax: Axes, df: pd.DataFrame, threshold: float | None = None) -> None:
     if _is_numeric(df):
         ax.plot(df["timestamp"], df["value"], color="#89b4fa", linewidth=0.8, label="value")
         ax.set_ylabel("Value")
@@ -568,7 +571,7 @@ def _chart_timeseries(ax, df: pd.DataFrame, threshold=None):
     ax.set_xlabel("Time")
 
 
-def _chart_histogram(ax, df: pd.DataFrame):
+def _chart_histogram(ax: Axes, df: pd.DataFrame) -> None:
     if _is_numeric(df):
         vals = df["value"].dropna()
         ax.hist(vals, bins=50, color="#89dceb", edgecolor="#313244")
@@ -582,7 +585,7 @@ def _chart_histogram(ax, df: pd.DataFrame):
         plt.xticks(rotation=30, ha="right")
 
 
-def _chart_heatmap(fig, ax, df: pd.DataFrame):
+def _chart_heatmap(fig: Figure, ax: Axes, df: pd.DataFrame) -> None:
     df["hour"] = df["timestamp"].dt.hour
     df["dow"] = df["timestamp"].dt.dayofweek
 
@@ -604,7 +607,7 @@ def _chart_heatmap(fig, ax, df: pd.DataFrame):
     fig.colorbar(im, ax=ax)
 
 
-def _chart_daily_pattern(ax, df: pd.DataFrame):
+def _chart_daily_pattern(ax: Axes, df: pd.DataFrame) -> None:
     df["hour"] = df["timestamp"].dt.hour
 
     if _is_numeric(df):
