@@ -94,7 +94,7 @@ def _check_permission(name: str, arguments: dict[str, Any]) -> str | None:
     if name == "call_service" and not _ALLOW_SCRIPT_EXECUTION:
         if arguments.get("domain") in _SCRIPT_DOMAINS:
             return (
-                f"Triggering '{arguments.get("domain")}' services is disabled "
+                f"Triggering '{arguments.get('domain')}' services is disabled "
                 "by the deployment configuration."
             )
     return None
@@ -796,12 +796,12 @@ async def _get_automation_config(
         return _http_error(state_response, "get_automation_config")
     state = state_response.json()
 
-    automation_id = state.get("attributes", {}).get("id")
+    automation_id = state.get('attributes', {}).get("id")
     if not automation_id:
         return [types.TextContent(
             type="text",
             text=f"Could not find internal config ID for {entity_id}. "
-                 f"Available attributes: {json.dumps(state.get("attributes", {}), indent=2)}",
+                 f"Available attributes: {json.dumps(state.get('attributes', {}), indent=2)}",
         )]
 
     config_response = await client.get(f"{HA_URL}/api/config/automation/config/{automation_id}")
@@ -921,7 +921,7 @@ async def _get_camera_snapshot_url(
         return _http_error(state_response, "get_camera_snapshot_url")
     state = state_response.json()
 
-    access_token = state.get("attributes", {}).get("access_token")
+    access_token = state.get('attributes', {}).get("access_token")
     if access_token:
         url = f"{HA_URL}/api/camera_proxy/{camera_entity_id}?token={access_token}"
     else:
@@ -929,7 +929,7 @@ async def _get_camera_snapshot_url(
 
     return [types.TextContent(
         type="text",
-        text=f"Camera snapshot URL (open in browser): {url}\nCurrent state: {state.get("state")}",
+        text=f"Camera snapshot URL (open in browser): {url}\nCurrent state: {state.get('state')}",
     )]
 
 
@@ -1036,7 +1036,7 @@ async def _create_helper(
     if helper_type not in valid_types:
         return [types.TextContent(
             type="text",
-            text=f"Invalid helper_type '{helper_type}'. Must be one of: {", ".join(sorted(valid_types))}",
+            text=f"Invalid helper_type '{helper_type}'. Must be one of: {', '.join(sorted(valid_types))}",
         )]
 
     response = await client.post(f"{HA_URL}/api/config/{helper_type}/config/{helper_id}", json=config)
@@ -1085,7 +1085,7 @@ async def _ha_ws_command(command: dict[str, Any], timeout: float = 30.0) -> dict
         await ws.send(json.dumps({"type": "auth", "access_token": HA_TOKEN}))
         msg = json.loads(await asyncio.wait_for(ws.recv(), timeout=timeout))
         if msg.get("type") != "auth_ok":
-            raise RuntimeError(f"Authentication failed: {msg.get("message", msg)}")
+            raise RuntimeError(f"Authentication failed: {msg.get('message', msg)}")
 
         await ws.send(json.dumps({"id": 1, **command}))
         while True:
@@ -1102,7 +1102,7 @@ async def _list_dashboards(  # pylint: disable=unused-argument
     except Exception as exc:  # pylint: disable=broad-exception-caught
         return [types.TextContent(type="text", text=f"list_dashboards error: {exc}")]
     if not result.get("success"):
-        return [types.TextContent(type="text", text=f"list_dashboards failed: {result.get("error", result)}")]
+        return [types.TextContent(type="text", text=f"list_dashboards failed: {result.get('error', result)}")]
     return [types.TextContent(type="text", text=json.dumps(result.get("result", []), indent=2))]
 
 
@@ -1118,7 +1118,7 @@ async def _get_dashboard_config(  # pylint: disable=unused-argument
     except Exception as exc:  # pylint: disable=broad-exception-caught
         return [types.TextContent(type="text", text=f"get_dashboard_config error: {exc}")]
     if not result.get("success"):
-        return [types.TextContent(type="text", text=f"get_dashboard_config failed: {result.get("error", result)}")]
+        return [types.TextContent(type="text", text=f"get_dashboard_config failed: {result.get('error', result)}")]
     return [types.TextContent(type="text", text=json.dumps(result.get("result", {}), indent=2))]
 
 
@@ -1135,7 +1135,7 @@ async def _update_dashboard_config(  # pylint: disable=unused-argument
     except Exception as exc:  # pylint: disable=broad-exception-caught
         return [types.TextContent(type="text", text=f"update_dashboard_config error: {exc}")]
     if not result.get("success"):
-        return [types.TextContent(type="text", text=f"update_dashboard_config failed: {result.get("error", result)}")]
+        return [types.TextContent(type="text", text=f"update_dashboard_config failed: {result.get('error', result)}")]
     dashboard_label = url_path or "default"
     return [types.TextContent(
         type="text",
