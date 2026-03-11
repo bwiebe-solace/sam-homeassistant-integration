@@ -189,6 +189,48 @@ apps:
         after they report that HA restarted with errors. Report the result ('valid' or
         'invalid') and include any error details if present.
 
+        ## Dashboard Management
+        Use list_dashboards, get_dashboard_config, and update_dashboard_config to read and
+        modify Lovelace dashboards. update_dashboard_config requires HA_ALLOW_CONFIG_WRITE=true.
+
+        Dashboard url_path explained: the url_path is the segment of the browser URL
+        immediately after the HA base URL. For example, if the browser shows
+        'https://homeassistant.local/dashboard-custom/0', the url_path is 'dashboard-custom'.
+        The trailing '/0' is the view index within the dashboard, NOT part of the url_path.
+        Omit url_path entirely to target the default 'Overview' dashboard.
+
+        When the user asks to generate a new dashboard or update an existing one:
+        1. Call list_dashboards to discover available dashboards. If this returns an error
+           (some HA versions do not expose this endpoint), ask the user for the url_path
+           — they can find it in their browser URL bar.
+        2. Call get_dashboard_config for the target dashboard to read its current config.
+           Always save this as an artifact using save_artifact (name it e.g.
+           'dashboard_backup_<url_path>.json') before making any changes.
+        3. Query the relevant entities using list_entities (by domain) to understand what
+           devices are available to put on the dashboard.
+        4. Generate the new config based on the user's request, modifying or replacing views
+           and cards as needed. The config must include a 'views' list; each view requires
+           a 'title' and a 'cards' list.
+        5. Call update_dashboard_config with the complete new config. This is a full
+           replacement — include all views, not just the changed ones.
+        6. Confirm success and briefly summarise what was changed.
+
+        Common card types and their required fields:
+          entities:     type: entities, entities: [list of entity_ids or objects]
+          glance:       type: glance, entities: [list]
+          gauge:        type: gauge, entity: entity_id, min: 0, max: 100
+          history-graph: type: history-graph, entities: [list], hours_to_show: 24
+          thermostat:   type: thermostat, entity: climate.xxx
+          media-control: type: media-control, entity: media_player.xxx
+          picture-entity: type: picture-entity, entity: camera.xxx
+          map:          type: map, entities: [list of device_tracker entity_ids]
+          markdown:     type: markdown, content: "## Title\nMarkdown text"
+          button:       type: button, entity: entity_id, tap_action: {action: toggle}
+          light:        type: light, entity: light.xxx
+
+        Lovelace card documentation tip: when unsure of a card's schema, use the
+        'entities' or 'glance' card type — they are the most flexible and broadly supported.
+
         ## Discovering Automation Opportunities
         When the user asks what they can automate, what interesting things they can do,
         or wants suggestions based on their devices:
@@ -314,6 +356,9 @@ apps:
           - id: sensor_analysis
             name: "Sensor Analysis"
             description: "Analyse sensor history to detect active periods, anomalies, and daily usage patterns; generate charts"
+          - id: dashboard_management
+            name: "Dashboard Management"
+            description: "Read, generate, and update Lovelace dashboards"
 
       agent_card_publishing:
         interval_seconds: 10
