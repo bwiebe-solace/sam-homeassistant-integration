@@ -22,47 +22,75 @@ apps:
       default_node_timeout_seconds: 60
 
       workflow:
-        version: "1.0.0"
+        version: "1.1.0"
         description: |
-          Queries the current state of the smart home and returns a formatted
-          status summary covering lights, climate, media players, and notable
-          switches or binary sensors.
+          Queries the current state of the smart home and sends a formatted
+          status summary via a Home Assistant notify service. Covers lights,
+          climate, media players, and notable switches.
+
+        input_schema:
+          type: object
+          properties:
+            notify_service:
+              type: string
+              description: >
+                HA notify service to deliver the summary (e.g. notify.mobile_app_phone).
+                Use notify.persistent_notification to show it in the HA UI.
+          required: [notify_service]
 
         output_schema:
           type: object
           properties:
-            summary:
+            confirmation:
               type: string
-              description: "Formatted human-readable house status report"
-          required: [summary]
+              description: "Confirmation that the notification was sent"
+          required: [confirmation]
 
         nodes:
-          - id: get_status
+          - id: send_report
             type: agent
             agent_name: "HomeAssistantAgent"
+            input:
+              notify_service: "{{workflow.input.notify_service}}"
             instruction: |
-              Compile a concise house status report.
-              Query the following domains in order: light, climate, media_player, switch.
-              For each domain, use list_entities to find active/on devices.
-              Organise the results into clear categories. Omit empty categories.
+              Compile a concise house status report and deliver it as a notification.
+
+              Step 1 — gather status:
+              Query these domains in order: light, climate, media_player, switch.
+              For each, use list_entities to find active/on devices.
+              Organise the results into clear categories; omit empty categories.
               Ignore all infrastructure, network, and diagnostic entities.
-              Return a friendly, readable summary — no raw entity IDs.
+              Use friendly names only — no raw entity IDs.
+
+              Step 2 — send notification:
+              Call call_service with:
+                domain: the part of notify_service before the dot
+                  (e.g. "notify" from "notify.mobile_app_phone")
+                service: the part after the dot
+                  (e.g. "mobile_app_phone" from "notify.mobile_app_phone")
+                service_data:
+                  title: "House Status"
+                  message: <the formatted summary from step 1>
+
+              Step 3 — confirm:
+              Return a brief confirmation that the notification was sent and
+              to which service.
             output_schema_override:
               type: object
               properties:
-                summary:
+                confirmation:
                   type: string
-                  description: "Formatted status summary, organised by category"
-              required: [summary]
+                  description: "One-sentence confirmation of what was sent and where"
+              required: [confirmation]
 
         output_mapping:
-          summary: "{{get_status.output.summary}}"
+          confirmation: "{{send_report.output.confirmation}}"
 
         skills:
           - id: house_status
             name: "House Status"
-            description: "Returns a formatted summary of the current smart home state"
-            tags: ["status", "overview"]
+            description: "Compiles a smart home status summary and sends it via a notify service"
+            tags: ["status", "overview", "notify"]
 
       session_service: *session_service
       artifact_service: *artifact_service
