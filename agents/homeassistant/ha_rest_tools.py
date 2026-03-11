@@ -770,7 +770,7 @@ async def list_tools() -> list[types.Tool]:
 async def call_tool(name: str, arguments: dict[str, Any]) -> list[types.TextContent]:
     error = _check_permission(name, arguments)
     if error:
-        return [types.TextContent(type="text", text=error)]
+        raise ValueError(error)
 
     if name == "invalidate_entity_cache":
         return _invalidate_entity_cache(arguments)
