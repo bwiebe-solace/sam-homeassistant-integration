@@ -98,8 +98,8 @@ Optional:
 
 | Requirement | Notes |
 |---|---|
-| HA MQTT integration | Required for HA -> SAM communication (voice, automations triggering SAM) |
 | Google Search API key + CSE ID | Required for the Research Agent |
+| HA MQTT integration | Only needed if you want to trigger SAM from HA automations via `mqtt.publish` |
 
 ---
 
@@ -208,22 +208,25 @@ The `sam_workflows` custom component provides:
 #### Configure
 
 1. In HA, go to **Settings -> Devices & Services -> Add Integration** and search for **SAM Workflows**
-2. Complete the config flow (broker connection details)
-
-Once installed, any workflow deployed to SAM automatically appears as `sam_workflows.<workflow_name>` in HA's services list.
-
-### Connect HA to the Solace broker via MQTT
-
-Required for HA automations to trigger SAM and for the conversation agent. In HA, go to **Settings -> Devices & Services -> Add Integration -> MQTT** and configure:
+2. Fill in the config flow:
 
 | Field | Value |
 |---|---|
-| Broker | Your Solace broker hostname |
-| Port | `8883` (TLS) or `1883` (plaintext) |
-| Username | Your Solace username |
-| Password | Your Solace password |
+| Solace Broker Hostname | e.g. `your-broker.messaging.solace.cloud` |
+| MQTT Port | `8883` (TLS, default) or `1883` (plain) |
+| MQTT Username | Your Solace username |
+| MQTT Password | Your Solace password |
+| Use TLS | Enabled by default (correct for Solace Cloud) |
+| SAM Namespace | Must match the `NAMESPACE` in your SAM `.env` |
+| SAM Web UI URL | Optional — only needed for STT/TTS (e.g. `http://192.168.1.100:8000`) |
+
+The integration manages its own broker connection — **no separate HA MQTT integration is required**. If you already have the HA MQTT integration configured (e.g. for Z-Wave or Zigbee2MQTT), this component will not conflict with it.
+
+Once installed, any workflow deployed to SAM automatically appears as `sam_workflows.<workflow_name>` in HA's services list.
 
 ### Trigger SAM from automations
+
+> **Note:** This method uses HA's built-in MQTT integration (`mqtt.publish`). If you don't have it configured, use `sam_workflows.trigger_workflow` instead (see below) — it doesn't require the HA MQTT integration.
 
 Publish an MQTT message from any HA automation to send a request to SAM:
 

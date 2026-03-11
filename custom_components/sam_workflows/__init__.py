@@ -1,6 +1,9 @@
 """SAM Workflows — HA custom integration.
 
-Bridges HomeAssistant to Solace Agent Mesh via MQTT:
+Bridges HomeAssistant to Solace Agent Mesh via a managed MQTT connection.
+The component connects directly to the Solace broker using aiomqtt — no
+dependency on HA's built-in MQTT integration is required.
+
   - Registers SAM as a conversation agent (voice assistant)
   - Auto-discovers SAM workflows and registers them as native HA services
   - Provides a sam_workflows.trigger_workflow fallback service
@@ -10,11 +13,12 @@ import asyncio
 import json
 import logging
 import re
-from typing import Any, Callable
+import ssl
+from typing import Any
 
+import aiomqtt
 import voluptuous as vol
 
-from homeassistant.components import mqtt
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant, ServiceCall
 
@@ -77,74 +81,126 @@ def _json_schema_to_vol(schema: dict | None) -> vol.Schema:
     return vol.Schema(vol_fields, extra=vol.ALLOW_EXTRA)
 
 
-async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
-    """Set up SAM Workflows from a config entry."""
-    namespace: str = entry.data["namespace"]
-    timeout_seconds: int = entry.data.get("timeout_seconds", 30)
+class _MQTTManager:
+    """Manages the component's direct MQTT connection to the Solace broker."""
 
-    # Futures keyed by session_id, resolved when SAM publishes a response.
-    pending_conversations: dict[str, asyncio.Future[str]] = {}
-    # Unsubscribe callables returned by mqtt.async_subscribe.
-    unsubscribers: list[Callable] = []
-    # service_name (snake_case) → original SAM workflow name
-    registered_workflows: dict[str, str] = {}
+    def __init__(
+        self,
+        hass: HomeAssistant,
+        entry: ConfigEntry,
+        namespace: str,
+        pending_conversations: dict[str, asyncio.Future[str]],
+        registered_workflows: dict[str, str],
+    ) -> None:
+        self._hass = hass
+        self._entry = entry
+        self._namespace = namespace
+        self._pending_conversations = pending_conversations
+        self._registered_workflows = registered_workflows
+        self._client: aiomqtt.Client | None = None
+        self._task: asyncio.Task | None = None
+        self._stop_event = asyncio.Event()
 
-    hass.data.setdefault(DOMAIN, {})[entry.entry_id] = {
-        "namespace": namespace,
-        "timeout_seconds": timeout_seconds,
-        "pending_conversations": pending_conversations,
-        "registered_workflows": registered_workflows,
-    }
+    def start(self) -> None:
+        self._task = self._hass.async_create_background_task(
+            self._run(), "sam_workflows_mqtt"
+        )
 
-    # --- Conversation response/error subscriptions ---
+    async def stop(self) -> None:
+        self._stop_event.set()
+        for future in self._pending_conversations.values():
+            if not future.done():
+                future.set_result("SAM connection closed.")
+        self._pending_conversations.clear()
+        if self._task:
+            self._task.cancel()
+            await asyncio.gather(self._task, return_exceptions=True)
+        self._client = None
 
-    async def _handle_response(msg: mqtt.ReceiveMessage) -> None:
+    async def publish(self, topic: str, payload: str, qos: int = 0) -> None:
+        if self._client is None:
+            _LOGGER.warning("Cannot publish to %s — MQTT not connected", topic)
+            return
+        await self._client.publish(topic, payload=payload, qos=qos)
+
+    async def _run(self) -> None:
+        data = self._entry.data
+        tls_context = ssl.create_default_context() if data.get("mqtt_tls", True) else None
+        reconnect_interval = 5
+        client_id = f"ha-sam-{self._entry.entry_id[:8]}"
+
+        while not self._stop_event.is_set():
+            try:
+                async with aiomqtt.Client(
+                    hostname=data["mqtt_host"],
+                    port=data.get("mqtt_port", 8883),
+                    username=data.get("mqtt_username"),
+                    password=data.get("mqtt_password"),
+                    tls_context=tls_context,
+                    identifier=client_id,
+                ) as client:
+                    self._client = client
+                    ns = self._namespace
+                    await client.subscribe(f"{ns}/ha/conversation/response/+")
+                    await client.subscribe(f"{ns}/ha/conversation/error/+")
+                    await client.subscribe(f"{ns}/a2a/v1/discovery/agentcards")
+                    _LOGGER.info(
+                        "SAM Workflows MQTT connected to %s:%s",
+                        data["mqtt_host"],
+                        data.get("mqtt_port", 8883),
+                    )
+                    async for message in client.messages:
+                        if self._stop_event.is_set():
+                            break
+                        topic = str(message.topic)
+                        if "conversation/response" in topic:
+                            self._on_response(message)
+                        elif "conversation/error" in topic:
+                            self._on_error(message)
+                        elif "discovery/agentcards" in topic:
+                            await self._on_agent_card(message)
+
+            except aiomqtt.MqttError as exc:
+                self._client = None
+                if not self._stop_event.is_set():
+                    _LOGGER.warning(
+                        "SAM Workflows MQTT error: %s — reconnecting in %ds",
+                        exc,
+                        reconnect_interval,
+                    )
+                    await asyncio.sleep(reconnect_interval)
+            except asyncio.CancelledError:
+                break
+
+        self._client = None
+
+    def _on_response(self, message: aiomqtt.Message) -> None:
         try:
-            payload = json.loads(msg.payload)
+            payload = json.loads(message.payload)
         except (ValueError, TypeError):
-            _LOGGER.warning("Non-JSON payload on response topic %s", msg.topic)
+            _LOGGER.warning("Non-JSON payload on response topic %s", message.topic)
             return
         session_id = payload.get("session_id")
         text = payload.get("text", "").strip()
-        future = pending_conversations.pop(session_id, None)
+        future = self._pending_conversations.pop(session_id, None)
         if future and not future.done():
             future.set_result(text or "(no response)")
 
-    async def _handle_error(msg: mqtt.ReceiveMessage) -> None:
+    def _on_error(self, message: aiomqtt.Message) -> None:
         try:
-            payload = json.loads(msg.payload)
+            payload = json.loads(message.payload)
         except (ValueError, TypeError):
-            _LOGGER.warning("Non-JSON payload on error topic %s", msg.topic)
+            _LOGGER.warning("Non-JSON payload on error topic %s", message.topic)
             return
         session_id = payload.get("session_id")
         error_text = payload.get("error", "Unknown error from SAM.")
-        future = pending_conversations.pop(session_id, None)
+        future = self._pending_conversations.pop(session_id, None)
         if future and not future.done():
             future.set_result(f"Sorry, SAM encountered an error: {error_text}")
 
-    unsubscribers.append(
-        await mqtt.async_subscribe(
-            hass,
-            f"{namespace}/ha/conversation/response/+",
-            _handle_response,
-        )
-    )
-    unsubscribers.append(
-        await mqtt.async_subscribe(
-            hass,
-            f"{namespace}/ha/conversation/error/+",
-            _handle_error,
-        )
-    )
-
-    # --- Workflow auto-discovery ---
-    # SAM publishes an AgentCard to this topic on every heartbeat interval.
-    # Cards are camelCase JSON (Pydantic serialize_by_alias=True).
-    # Extensions live under capabilities.extensions, not at the card root.
-
-    async def _handle_agent_card(msg: mqtt.ReceiveMessage) -> None:
+    async def _on_agent_card(self, message: aiomqtt.Message) -> None:
         try:
-            card = json.loads(msg.payload)
+            card = json.loads(message.payload)
         except (ValueError, TypeError):
             return
 
@@ -158,9 +214,8 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
             return
 
         service_name = _to_service_name(workflow_name)
-
-        if service_name in registered_workflows:
-            return  # already registered; heartbeat re-announcements are ignored
+        if service_name in self._registered_workflows:
+            return
 
         display_name: str = card.get("displayName") or workflow_name
         input_schema = _get_ext(extensions, _EXT_SCHEMAS).get("input_schema")
@@ -172,31 +227,54 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
             service_name,
         )
 
+        namespace = self._namespace
+        self_ref = self
+
         async def _invoke(call: ServiceCall, _wf: str = workflow_name) -> None:
             topic = f"{namespace}/ha/workflows/{_wf}"
-            await mqtt.async_publish(hass, topic, json.dumps(dict(call.data)), qos=1)
+            await self_ref.publish(topic, json.dumps(dict(call.data)), qos=1)
             _LOGGER.info("Invoked SAM workflow '%s'", _wf)
 
-        hass.services.async_register(DOMAIN, service_name, _invoke, schema=svc_schema)
-        registered_workflows[service_name] = workflow_name
+        self._hass.services.async_register(DOMAIN, service_name, _invoke, schema=svc_schema)
+        self._registered_workflows[service_name] = workflow_name
 
-    unsubscribers.append(
-        await mqtt.async_subscribe(
-            hass,
-            f"{namespace}/a2a/v1/discovery/agentcards",
-            _handle_agent_card,
+
+async def async_migrate_entry(hass: HomeAssistant, config_entry: ConfigEntry) -> bool:
+    """Migrate config entries from older versions."""
+    if config_entry.version < 2:
+        _LOGGER.warning(
+            "SAM Workflows config entry (version %s) requires broker credentials "
+            "added in version 2. Please delete and re-add the integration.",
+            config_entry.version,
         )
-    )
+        return False
+    return True
 
-    hass.data[DOMAIN][entry.entry_id]["unsubscribers"] = unsubscribers
 
-    # --- Generic fallback: trigger any workflow by name ---
+async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
+    """Set up SAM Workflows from a config entry."""
+    namespace: str = entry.data["namespace"]
+    timeout_seconds: int = entry.data.get("timeout_seconds", 30)
+
+    pending_conversations: dict[str, asyncio.Future[str]] = {}
+    registered_workflows: dict[str, str] = {}
+
+    hass.data.setdefault(DOMAIN, {})[entry.entry_id] = {
+        "namespace": namespace,
+        "timeout_seconds": timeout_seconds,
+        "pending_conversations": pending_conversations,
+        "registered_workflows": registered_workflows,
+    }
+
+    manager = _MQTTManager(hass, entry, namespace, pending_conversations, registered_workflows)
+    manager.start()
+    hass.data[DOMAIN][entry.entry_id]["mqtt_manager"] = manager
 
     async def _trigger_workflow(call: ServiceCall) -> None:
         workflow_name: str = call.data["workflow_name"]
         data: dict = call.data.get("data", {})
         topic = f"{namespace}/ha/workflows/{workflow_name}"
-        await mqtt.async_publish(hass, topic, json.dumps(data), qos=1)
+        await manager.publish(topic, json.dumps(data), qos=1)
         _LOGGER.info("Triggered SAM workflow '%s' via trigger_workflow", workflow_name)
 
     hass.services.async_register(
@@ -211,7 +289,6 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         ),
     )
 
-    # --- Platform setup ---
     platforms = list(_ALWAYS_PLATFORMS)
     if entry.data.get("sam_url"):
         platforms.extend(_SPEECH_PLATFORMS)
@@ -229,8 +306,9 @@ async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     unloaded = await hass.config_entries.async_unload_platforms(entry, platforms)
     if unloaded:
         entry_data = hass.data[DOMAIN].pop(entry.entry_id, {})
-        for unsub in entry_data.get("unsubscribers", []):
-            unsub()
+        manager: _MQTTManager | None = entry_data.get("mqtt_manager")
+        if manager:
+            await manager.stop()
         for service_name in entry_data.get("registered_workflows", {}):
             hass.services.async_remove(DOMAIN, service_name)
         hass.services.async_remove(DOMAIN, "trigger_workflow")
