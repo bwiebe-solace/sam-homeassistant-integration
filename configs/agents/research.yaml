@@ -82,7 +82,6 @@ apps:
           tool_config:
             google_search_api_key: "${GOOGLE_SEARCH_API_KEY}"
             google_cse_id: "${GOOGLE_CSE_ID}"
-            tavily_api_key: "${TAVILY_API_KEY}"
 
         - tool_type: builtin
           tool_name: deep_research
@@ -92,7 +91,6 @@ apps:
             sources: ["web"]
             google_search_api_key: "${GOOGLE_SEARCH_API_KEY}"
             google_cse_id: "${GOOGLE_CSE_ID}"
-            tavily_api_key: "${TAVILY_API_KEY}"
 
         - tool_type: builtin-group
           group_name: artifact_management
