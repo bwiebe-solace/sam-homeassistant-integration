@@ -24,6 +24,12 @@ Tools:
   - create_helper:            Create or update an input_* helper via POST /api/config/{type}/config/{id}
   - call_service:             Call any HA service via POST /api/services/{domain}/{service}
   - invalidate_entity_cache:  Discard cached entity lists so the next lookup re-queries HA
+  - list_areas:               List all areas/rooms via WS config/area_registry/list
+  - list_floors:              List all floors/zones via WS config/floor_registry/list
+  - list_devices:             List all devices with area assignments via WS config/device_registry/list
+  - list_areas:               List all areas/rooms via WS config/area_registry/list
+  - list_floors:              List all floors/zones via WS config/floor_registry/list
+  - list_devices:             List all devices with area assignments via WS config/device_registry/list
   - list_dashboards:          List all Lovelace dashboards via WS lovelace/dashboards/list
   - get_dashboard_config:     Get Lovelace dashboard config via WS lovelace/config
   - update_dashboard_config:  Write Lovelace dashboard config via WS lovelace/config/save
@@ -145,6 +151,7 @@ _ENABLED_TOOLS: frozenset[str] = frozenset(
         "get_automation_config", "get_script_config", "get_logbook",
         "get_calendar_events", "list_services", "get_system_info",
         "get_error_log", "get_camera_snapshot_url", "check_config",
+        "list_areas", "list_floors", "list_devices",
         "list_dashboards", "get_dashboard_config",
         # Cache management — always available
         "invalidate_entity_cache",
@@ -690,6 +697,51 @@ async def list_tools() -> list[types.Tool]:
             },
         ),
         types.Tool(
+            name="list_areas",
+            description=(
+                "List all areas (rooms) defined in HomeAssistant. "
+                "Returns each area's id, name, floor_id, aliases, icon, and labels. "
+                "Use this to discover what rooms exist and which floor/zone they belong to. "
+                "Combine with list_devices to audit whether devices are assigned to the correct area."
+            ),
+            inputSchema={
+                "type": "object",
+                "properties": {},
+                "additionalProperties": False,
+            },
+        ),
+        types.Tool(
+            name="list_floors",
+            description=(
+                "List all floors (zones) defined in HomeAssistant. "
+                "Returns each floor's floor_id, name, level, icon, and aliases. "
+                "Floors are the top-level grouping above areas/rooms (e.g. 'Main Floor', 'Second Floor', 'Basement'). "
+                "Use this together with list_areas to understand the full location hierarchy."
+            ),
+            inputSchema={
+                "type": "object",
+                "properties": {},
+                "additionalProperties": False,
+            },
+        ),
+        types.Tool(
+            name="list_devices",
+            description=(
+                "List all devices registered in HomeAssistant, including their area assignment. "
+                "Returns each device's id, name, name_by_user (custom name if set), area_id, "
+                "manufacturer, model, and disabled_by. "
+                "Use this to audit devices for naming/location mismatches — e.g. a device named "
+                "'Living Room Motion' assigned to area_id for 'Office'. "
+                "Cross-reference area_id values against list_areas output to get area names. "
+                "Devices with area_id=null are unassigned."
+            ),
+            inputSchema={
+                "type": "object",
+                "properties": {},
+                "additionalProperties": False,
+            },
+        ),
+        types.Tool(
             name="list_dashboards",
             description=(
                 "List all Lovelace dashboards configured in HomeAssistant. "
@@ -812,6 +864,12 @@ async def call_tool(name: str, arguments: dict[str, Any]) -> list[types.TextCont
             return await _create_helper(client, arguments)
         elif name == "call_service":
             return await _call_service(client, arguments)
+        elif name == "list_areas":
+            return await _list_areas(arguments)
+        elif name == "list_floors":
+            return await _list_floors(arguments)
+        elif name == "list_devices":
+            return await _list_devices(arguments)
         elif name == "list_dashboards":
             return await _list_dashboards(client, arguments)
         elif name == "get_dashboard_config":
@@ -1246,6 +1304,36 @@ async def _ha_ws_command(command: dict[str, Any], timeout: float = 30.0) -> dict
             msg = json.loads(await asyncio.wait_for(ws.recv(), timeout=timeout))
             if msg.get("id") == 1:
                 return msg
+
+
+async def _list_areas(args: dict[str, Any]) -> list[types.TextContent]:  # pylint: disable=unused-argument
+    try:
+        result = await _ha_ws_command({"type": "config/area_registry/list"})
+    except Exception as exc:  # pylint: disable=broad-exception-caught
+        return [types.TextContent(type="text", text=f"list_areas error: {exc}")]
+    if not result.get("success"):
+        return [types.TextContent(type="text", text=f"list_areas failed: {result.get('error', result)}")]
+    return [types.TextContent(type="text", text=json.dumps(result.get("result", []), indent=2))]
+
+
+async def _list_floors(args: dict[str, Any]) -> list[types.TextContent]:  # pylint: disable=unused-argument
+    try:
+        result = await _ha_ws_command({"type": "config/floor_registry/list"})
+    except Exception as exc:  # pylint: disable=broad-exception-caught
+        return [types.TextContent(type="text", text=f"list_floors error: {exc}")]
+    if not result.get("success"):
+        return [types.TextContent(type="text", text=f"list_floors failed: {result.get('error', result)}")]
+    return [types.TextContent(type="text", text=json.dumps(result.get("result", []), indent=2))]
+
+
+async def _list_devices(args: dict[str, Any]) -> list[types.TextContent]:  # pylint: disable=unused-argument
+    try:
+        result = await _ha_ws_command({"type": "config/device_registry/list"})
+    except Exception as exc:  # pylint: disable=broad-exception-caught
+        return [types.TextContent(type="text", text=f"list_devices error: {exc}")]
+    if not result.get("success"):
+        return [types.TextContent(type="text", text=f"list_devices failed: {result.get('error', result)}")]
+    return [types.TextContent(type="text", text=json.dumps(result.get("result", []), indent=2))]
 
 
 async def _list_dashboards(  # pylint: disable=unused-argument
