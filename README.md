@@ -1,21 +1,23 @@
-# SAM × HomeAssistant
+# SAM x HomeAssistant
 
-A bidirectional integration between **Solace Agent Mesh (SAM)** and **HomeAssistant** that turns your smart home into a conversational AI system — and lets your home trigger AI workflows back.
+A bidirectional integration between **Solace Agent Mesh (SAM)** and **Home Assistant** that turns your smart home into a conversational AI system — and lets your home trigger AI workflows back.
+
+> **Note:** This is a hackathon / personal project. It works well for its intended use case but has not been hardened for production deployment. Expect rough edges, evolving APIs, and minimal test coverage.
 
 ---
 
 ## What It Does
 
-### SAM → HomeAssistant (You talk to your home)
+### SAM -> Home Assistant (You talk to your home)
 
 Chat or speak with SAM through a web UI. SAM routes your request to the right agent:
 
-- **"Turn off all the downstairs lights"** → HomeAssistant Agent controls devices via HA REST API
-- **"What's been happening with the washing machine sensor?"** → HomeAssistant Agent fetches history, analysis tools detect the wash cycle, a chart is generated
-- **"Is the Sonos Arc compatible with my receiver?"** → Research Agent searches the web for a current answer
-- **"Give me a weekly energy usage report as a PDF"** → Orchestrator coordinates HA data retrieval, Visualization Agent creates charts, PDF Report Agent compiles the document
+- **"Turn off all the downstairs lights"** -> HomeAssistant Agent controls devices via HA REST API
+- **"What's been happening with the washing machine sensor?"** -> HomeAssistant Agent fetches history, analysis tools detect the wash cycle, a chart is generated
+- **"Is the Sonos Arc compatible with my receiver?"** -> Research Agent searches the web for a current answer
+- **"Give me a weekly energy usage report as a PDF"** -> Orchestrator coordinates HA data retrieval, Visualization Agent creates charts, PDF Report Agent compiles the document
 
-### HomeAssistant → SAM (Your home talks back)
+### Home Assistant -> SAM (Your home talks back)
 
 HA automations can send requests to SAM over MQTT. This means your home can:
 
@@ -23,9 +25,9 @@ HA automations can send requests to SAM over MQTT. This means your home can:
 - Route HA voice assistant queries through SAM's full agent mesh
 - Fire off complex multi-agent tasks from HA scripts or automations
 
-### SAM Workflows → HomeAssistant Services (Auto-discovery)
+### SAM Workflows -> Home Assistant Services (Auto-discovery)
 
-The included `sam_workflows` custom HA integration subscribes to SAM's agent discovery topic. Any SAM workflow tagged as a workflow type automatically appears in HomeAssistant as a native service — no HA config changes needed when you deploy new workflows.
+The included `sam_workflows` custom HA integration subscribes to SAM's agent discovery topic. Any SAM workflow automatically appears in Home Assistant as a native service — no HA config changes needed when you deploy new workflows.
 
 ---
 
@@ -33,34 +35,53 @@ The included `sam_workflows` custom HA integration subscribes to SAM's agent dis
 
 ```
   Browser / Voice
-       │
-       ▼
-  Web UI Gateway ──────────────────────────────────────────────────────────┐
-  (port 8000)                                                               │
-       │                                                                    │
-       ▼                                                           Solace Broker
-  OrchestratorAgent ◄──────────────── HA MQTT Gateway ◄──── MQTT ──────── │
-       │                               (HA automations,                     │
-       │                                voice pipeline)                     │
-       ├──► HomeAssistantAgent                                               │
-       │         ├── HA REST tools (state, control, automations, history)   │
-       │         ├── HA MCP server (/api/mcp)                               │
-       │         └── Data analysis tools (timeseries, anomaly detection)    │
-       │                                                                    │
-       ├──► ResearchAgent                                                   │
-       │         └── Google Custom Search (web_search, deep_research)      │
-       │                                                                    │
-       ├──► VisualizationAgent                                              │
-       │         └── Plotly chart generation (PNG / SVG)                   │
-       │                                                                    │
-       └──► PDFReportAgent                                                  │
-                 └── fpdf2 document generation                              │
-                                                                            │
-  HomeAssistant                                                             │
-       ├── MQTT Integration ──────────────────────── MQTT ─────────────────┘
-       └── sam_workflows custom component
-               └── Subscribes to SAM discovery, registers workflows as HA services
+       |
+       v
+  +------------------+     +-------------------+
+  | Web UI Gateway   |     | Solace Broker     |
+  | (port 8000)      |<--->| (SMF + MQTT)      |
+  +------------------+     +-------------------+
+       |                          ^       ^
+       v                          |       |
+  +--------------------+          |       |
+  | OrchestratorAgent  |          |       |
+  +--------------------+          |       |
+       |                          |       |
+       +---> HomeAssistantAgent   |       |
+       |      +-- HA REST tools   |       |
+       |      +-- Data analysis   |       |
+       |                          |       |
+       +---> ResearchAgent        |       |
+       |      +-- Google Search   |       |
+       |                          |       |
+       +---> VisualizationAgent   |       |
+       |      +-- Plotly charts   |       |
+       |                          |       |
+       +---> PDFReportAgent       |       |
+              +-- fpdf2 docs      |       |
+                                  |       |
+  +---------------------------+   |       |
+  | Home Assistant            |   |       |
+  |  +-- MQTT Integration ----+---+       |
+  |  +-- sam_workflows component ---------+
+  |       +-- Conversation agent          |
+  |       +-- STT / TTS providers         |
+  |       +-- Workflow service discovery  |
+  +---------------------------------------+
+
+  +---------------------------+
+  | SAM Workflows             |
+  |  House Status Report      |
+  |  Morning Briefing         |
+  |  Evening Routine          |
+  |  Device Health Check      |
+  |  Sensor Analysis Report   |
+  |  Create Automation        |
+  |  ...and more              |
+  +---------------------------+
 ```
+
+All agents and workflows communicate via the Solace broker. The Web UI Gateway handles browser sessions. The HA custom component (`sam_workflows`) connects to the same broker via MQTT and provides a conversation agent, STT/TTS providers, and automatic workflow-to-service mapping.
 
 ---
 
@@ -70,10 +91,15 @@ The included `sam_workflows` custom HA integration subscribes to SAM's agent dis
 |---|---|
 | Docker + Docker Compose | For the recommended deployment |
 | Solace broker | Free cloud broker at [solace.com/try-it-now](https://solace.com/try-it-now) |
-| HomeAssistant instance | With a Long-Lived Access Token |
-| HA MQTT integration | Configured to connect to the same Solace broker |
-| LLM API key | Gemini (free tier) recommended — see below |
-| Google Search API key + CSE ID | Only needed for the Research Agent |
+| Home Assistant instance | With a Long-Lived Access Token (Profile -> Security) |
+| LLM API key | Gemini (free tier) recommended — [aistudio.google.com/apikey](https://aistudio.google.com/apikey) |
+
+Optional:
+
+| Requirement | Notes |
+|---|---|
+| HA MQTT integration | Required for HA -> SAM communication (voice, automations triggering SAM) |
+| Google Search API key + CSE ID | Required for the Research Agent |
 
 ---
 
@@ -96,18 +122,21 @@ SOLACE_BROKER_USERNAME=solace-cloud-client
 SOLACE_BROKER_PASSWORD=your-password
 SOLACE_BROKER_VPN=your-vpn-name
 
-# MQTT (same broker, hostname only)
-SOLACE_MQTT_HOST=your-broker.messaging.solace.cloud
-
 # LLM — Gemini via OpenAI-compatible endpoint
 LLM_SERVICE_API_KEY=your-gemini-api-key
 
-# HomeAssistant
+# Home Assistant
 HA_URL=https://your-ha-instance.ui.nabu.casa
 HA_TOKEN=your-long-lived-access-token
 
-# Session cookie signing
-SESSION_SECRET_KEY=  # generate: python -c "import secrets; print(secrets.token_hex(32))"
+# Namespace — isolates SAM topics/queues on the broker
+NAMESPACE=your-namespace
+
+# Production settings
+USE_TEMPORARY_QUEUES=false
+
+# Session cookie signing — generate with: python -c "import secrets; print(secrets.token_hex(32))"
+SESSION_SECRET_KEY=your-generated-key
 ```
 
 ### 2. Start
@@ -116,7 +145,13 @@ SESSION_SECRET_KEY=  # generate: python -c "import secrets; print(secrets.token_
 docker compose up -d
 ```
 
-The web UI is available at `http://localhost:8000`.
+The web UI is available at `http://<host>:8000`.
+
+Docker images are built automatically on every push to `main` and published to GHCR. To update a running deployment:
+
+```bash
+docker compose pull && docker compose up -d
+```
 
 ### 3. (Optional) Enable the Research Agent
 
@@ -127,31 +162,68 @@ GOOGLE_SEARCH_API_KEY=your-google-api-key
 GOOGLE_CSE_ID=your-cse-id
 ```
 
-- API key: [console.cloud.google.com](https://console.cloud.google.com) → enable "Custom Search API"
-- CSE ID: [cse.google.com](https://cse.google.com) → create a search engine set to "Search the entire web"
+- API key: [console.cloud.google.com](https://console.cloud.google.com) -> enable "Custom Search API"
+- CSE ID: [cse.google.com](https://cse.google.com) -> create a search engine set to "Search the entire web"
 
-Free tier provides 100 queries/day.
+### 4. (Optional) Enable the HA MQTT gateway
+
+The MQTT gateway allows Home Assistant automations to send requests to SAM. It is disabled by default. To enable it, rename the config file to remove the `_` prefix:
+
+```bash
+mv configs/gateways/_ha-mqtt.yaml configs/gateways/ha-mqtt.yaml
+```
+
+Then add these to your `.env`:
+
+```env
+SOLACE_MQTT_HOST=your-broker.messaging.solace.cloud
+SOLACE_MQTT_PORT=8883
+SOLACE_MQTT_TLS=true
+```
 
 ---
 
-## HomeAssistant Setup
+## Home Assistant Setup
+
+### Install the SAM Workflows custom component
+
+The `sam_workflows` custom component provides:
+
+- **Conversation agent** — Route HA voice queries through SAM's full agent mesh
+- **STT / TTS providers** — Speech-to-text and text-to-speech via SAM
+- **Workflow discovery** — SAM workflows auto-register as native HA services
+
+#### Install via HACS (recommended)
+
+1. In HACS, go to **Integrations -> Custom repositories**
+2. Add `https://github.com/bwiebe-solace/sam-homeassistant-integration` as an Integration
+3. Install **SAM Workflows**
+4. Restart Home Assistant
+
+#### Install manually
+
+1. Copy `custom_components/sam_workflows/` into your HA `config/custom_components/` directory
+2. Restart Home Assistant
+
+#### Configure
+
+1. In HA, go to **Settings -> Devices & Services -> Add Integration** and search for **SAM Workflows**
+2. Complete the config flow (broker connection details)
+
+Once installed, any workflow deployed to SAM automatically appears as `sam_workflows.<workflow_name>` in HA's services list.
 
 ### Connect HA to the Solace broker via MQTT
 
-In HA, go to **Settings → Devices & Services → Add Integration → MQTT** and configure:
+Required for HA automations to trigger SAM and for the conversation agent. In HA, go to **Settings -> Devices & Services -> Add Integration -> MQTT** and configure:
 
 | Field | Value |
 |---|---|
-| Broker | Your Solace broker hostname (same as `SOLACE_MQTT_HOST`) |
+| Broker | Your Solace broker hostname |
 | Port | `8883` (TLS) or `1883` (plaintext) |
 | Username | Your Solace username |
 | Password | Your Solace password |
 
-### Send HA voice queries through SAM (optional)
-
-Configure HA's voice assistant pipeline to use SAM as the conversation agent. In HA, go to **Settings → Voice Assistants** and set the conversation agent to the SAM MQTT integration. Voice queries will be routed through the full SAM agent mesh.
-
-### Trigger SAM from automations (optional)
+### Trigger SAM from automations
 
 Publish an MQTT message from any HA automation to send a request to SAM:
 
@@ -163,21 +235,15 @@ action:
       payload: '{"text": "Good morning briefing for Ben"}'
 ```
 
-### Install the SAM Workflows custom component (optional)
+### Use SAM workflows as HA services
 
-This component auto-discovers SAM workflows and registers them as native HA services.
-
-1. Copy `custom_components/sam_workflows/` into your HA `config/custom_components/` directory.
-2. In HA, go to **Settings → Devices & Services → Add Integration** and search for **SAM Workflows**.
-3. Complete the config flow (broker connection details).
-
-Once installed, any workflow deployed to SAM will automatically appear as `sam_workflows.<workflow_name>` in HA's services list — no restarts or config changes required. Reference them from automations like any native service:
+Once the custom component discovers a workflow, call it like any native service:
 
 ```yaml
 action:
-  - action: sam_workflows.good_morning_workflow
+  - action: sam_workflows.house_status_report
     data:
-      user: "Ben"
+      notify_service: "notify.mobile_app_phone"
 ```
 
 ---
@@ -187,14 +253,32 @@ action:
 | Agent | What It Does |
 |---|---|
 | **OrchestratorAgent** | Default entry point. Routes requests to the right agent or coordinates multi-agent tasks. |
-| **HomeAssistantAgent** | Controls devices, queries state and history, manages automations/scripts/helpers, reads calendars and logbook, analyses sensor data, manages dashboards. |
+| **HomeAssistantAgent** | Controls devices, queries state and history, manages automations/scripts/helpers, reads calendars and logbook, analyses sensor data, manages dashboards, queries device/area/floor registries. |
 | **ResearchAgent** | Web search for current information — device specs, HA docs, troubleshooting, news. Supports deep multi-source research. Requires Google Search API keys. |
 | **VisualizationAgent** | Creates Plotly charts (line, bar, scatter, pie, heatmap, gauge, etc.) from any data. Outputs PNG or SVG artifacts. |
-| **PDFReportAgent** | Generates formatted PDF documents combining text, tables, and embedded charts. Good for weekly summaries or analysis reports. |
+| **PDFReportAgent** | Generates formatted PDF documents combining text, tables, and embedded charts. |
 
 ---
 
-## HomeAssistant Agent Permissions
+## Workflows
+
+Workflows are pre-built multi-step tasks that the orchestrator or Home Assistant can trigger. They appear automatically in the SAM web UI and (via the custom component) as HA services.
+
+| Workflow | Description |
+|---|---|
+| **House Status Report** | Queries active lights, climate, media, and switches, then sends a summary notification via a specified notify service. |
+| **Morning Briefing** | Compiles weather, calendar, and device status into a morning summary notification. |
+| **Evening Routine** | Dims lights, adjusts thermostat, and pauses media for wind-down. |
+| **Sensor Analysis Report** | Pulls history for a sensor entity, runs statistical analysis, generates a chart, and sends findings. |
+| **Create Automation** | Creates a Home Assistant automation from a plain-English description. |
+| **Device Health Check** | Audits device battery levels, unavailable entities, and connectivity issues, then sends a health report. |
+| **Air Quality Report** | Analyses air quality sensor history (radon, CO2, PM2.5) and sends a report. |
+| **Security Roundup** | Reviews door/window sensors, motion detectors, and lock status, then sends a security summary. |
+| **Weekly Home Digest** | Compiles a week-long overview of energy usage, device activity, and notable events. |
+
+---
+
+## Home Assistant Agent Permissions
 
 The HA agent's write capabilities are controlled via `.env` flags:
 
@@ -218,7 +302,7 @@ source .venv/bin/activate
 pip install -r requirements.txt
 ```
 
-Set `PYTHON_BIN` in your `.env` to the venv Python:
+Set `PYTHON_BIN` in your `.env` to the venv Python so the MCP tool servers can find it:
 
 ```env
 PYTHON_BIN=/path/to/your/.venv/bin/python
@@ -235,19 +319,24 @@ sam run --system-env
 ## Project Structure
 
 ```
-├── agents/
-│   ├── homeassistant/       # HA REST tools MCP server
-│   ├── data-analysis/       # Timeseries analysis MCP server
-│   └── pdf-report/          # PDF generation MCP server
-├── configs/
-│   ├── agents/              # Agent YAML configs
-│   └── gateways/            # Web UI and HA MQTT gateway configs
-├── custom_components/
-│   └── sam_workflows/       # HA custom integration for workflow discovery
-├── gateways/
-│   └── ha_mqtt/             # HA MQTT gateway adapter
-├── shared_config.yaml       # Shared broker, LLM, and service anchors
-├── docker-compose.yml
-├── Dockerfile
-└── requirements.txt
+.
++-- agents/
+|   +-- homeassistant/          # HA REST + WebSocket tools MCP server
+|   +-- data-analysis/          # Timeseries analysis MCP server
+|   +-- pdf-report/             # PDF generation MCP server
++-- configs/
+|   +-- agents/                 # Agent YAML configs
+|   +-- gateways/               # Web UI and HA MQTT gateway configs
+|   +-- workflows/              # SAM workflow YAML configs
++-- custom_components/
+|   +-- sam_workflows/          # HA custom integration (conversation, STT, TTS, workflow discovery)
++-- gateways/
+|   +-- ha_mqtt/                # HA MQTT gateway adapter
++-- .github/
+|   +-- workflows/docker.yml    # CI: build and push Docker image to GHCR on push to main
++-- shared_config.yaml          # Shared broker, LLM, and service config anchors
++-- docker-compose.yml
++-- Dockerfile
++-- requirements.txt
++-- hacs.json                   # HACS metadata for custom component installation
 ```
