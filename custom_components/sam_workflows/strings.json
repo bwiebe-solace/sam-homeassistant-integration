@@ -1,0 +1,21 @@
+{
+  "config": {
+    "step": {
+      "user": {
+        "title": "Connect to SAM",
+        "description": "Configure the connection to your Solace Agent Mesh instance. The SAM Web UI URL is only needed if you want to use SAM as your TTS/STT provider.",
+        "data": {
+          "namespace": "SAM Namespace",
+          "timeout_seconds": "Conversation response timeout (seconds)",
+          "sam_url": "SAM Web UI URL (optional, for TTS/STT — e.g. http://localhost:8000)"
+        }
+      }
+    },
+    "error": {
+      "cannot_connect": "Could not connect — check that HA's MQTT integration is configured and the namespace is correct."
+    },
+    "abort": {
+      "already_configured": "SAM Workflows is already configured."
+    }
+  }
+}
