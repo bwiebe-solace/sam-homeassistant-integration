@@ -58,7 +58,7 @@ class SAMTextToSpeechEntity(TextToSpeechEntity):
     async def async_get_tts_audio(
         self, message: str, language: str, options: dict[str, Any]
     ) -> TtsAudioType:
-        """Request synthesised audio from SAM's /tts endpoint."""
+        """Request synthesised audio from SAM's /api/v1/speech/tts endpoint."""
         sam_url = self._entry.data["sam_url"].rstrip("/")
         session = async_get_clientsession(self.hass)
 
@@ -68,7 +68,7 @@ class SAMTextToSpeechEntity(TextToSpeechEntity):
 
         try:
             async with session.post(
-                f"{sam_url}/tts", json=body, timeout=_REQUEST_TIMEOUT
+                f"{sam_url}/api/v1/speech/tts", json=body, timeout=_REQUEST_TIMEOUT
             ) as resp:
                 if resp.status != 200:
                     _LOGGER.error(

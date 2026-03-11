@@ -81,7 +81,7 @@ class SAMSpeechToTextEntity(SpeechToTextEntity):
     async def async_process_audio_stream(
         self, metadata: SpeechMetadata, stream: AsyncIterable[bytes]
     ) -> SpeechResult:
-        """Collect the audio stream and transcribe via SAM's /stt endpoint."""
+        """Collect the audio stream and transcribe via SAM's /api/v1/speech/stt endpoint."""
         sam_url = self._entry.data["sam_url"].rstrip("/")
         session = async_get_clientsession(self.hass)
 
@@ -105,7 +105,7 @@ class SAMSpeechToTextEntity(SpeechToTextEntity):
 
         try:
             async with session.post(
-                f"{sam_url}/stt", data=form, timeout=_REQUEST_TIMEOUT
+                f"{sam_url}/api/v1/speech/stt", data=form, timeout=_REQUEST_TIMEOUT
             ) as resp:
                 if resp.status != 200:
                     _LOGGER.error(
