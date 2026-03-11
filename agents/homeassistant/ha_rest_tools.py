@@ -595,38 +595,72 @@ async def list_tools() -> list[types.Tool]:
         types.Tool(
             name="call_service",
             description=(
-                "Call a HomeAssistant service to control any device. "
+                "Call a HomeAssistant service to control any device or trigger any action. "
                 "Works for ALL entities regardless of voice-assistant exposure settings. "
                 "Use list_entities first to find the entity_id, then call the service.\n"
+                "Most services require a target (entity_id, area_id, or device_id), but some "
+                "(e.g. notify) do not — pass service-specific parameters directly instead.\n"
                 "Common examples:\n"
-                "  Turn off light:    domain='light',   service='turn_off',          entity_id='light.coffee_bar_light'\n"
-                "  Turn on light:     domain='light',   service='turn_on',           entity_id='light.living_room'\n"
-                "  Set brightness:    domain='light',   service='turn_on',           entity_id='light.xxx', brightness_pct=80\n"
-                "  Set color temp:    domain='light',   service='turn_on',           entity_id='light.xxx', color_temp=300\n"
-                "  Toggle switch:     domain='switch',  service='toggle',            entity_id='switch.xxx'\n"
-                "  Set thermostat:    domain='climate', service='set_temperature',   entity_id='climate.xxx', temperature=21, hvac_mode='heat'\n"
-                "  Pause media:       domain='media_player', service='media_pause',  entity_id='media_player.xxx'\n"
-                "  Set volume:        domain='media_player', service='volume_set',   entity_id='media_player.xxx', volume_level=0.5\n"
-                "  Run script:        domain='script',  service='turn_on',           entity_id='script.xxx'\n"
-                "  Trigger automation: domain='automation', service='trigger',       entity_id='automation.xxx'"
+                "  Turn off light:         domain='light',        service='turn_off',        entity_id='light.coffee_bar_light'\n"
+                "  Turn on light:          domain='light',        service='turn_on',         entity_id='light.living_room'\n"
+                "  Turn on multiple:       domain='light',        service='turn_on',         entity_id=['light.one', 'light.two']\n"
+                "  Set brightness:         domain='light',        service='turn_on',         entity_id='light.xxx', brightness_pct=80\n"
+                "  Set color temp:         domain='light',        service='turn_on',         entity_id='light.xxx', color_temp=300\n"
+                "  Toggle switch:          domain='switch',       service='toggle',          entity_id='switch.xxx'\n"
+                "  Turn on area:           domain='homeassistant', service='turn_on',        area_id='living_room'\n"
+                "  Set thermostat:         domain='climate',      service='set_temperature', entity_id='climate.xxx', temperature=21, hvac_mode='heat'\n"
+                "  Pause media:            domain='media_player', service='media_pause',     entity_id='media_player.xxx'\n"
+                "  Set volume:             domain='media_player', service='volume_set',      entity_id='media_player.xxx', volume_level=0.5\n"
+                "  Run script:             domain='script',       service='turn_on',         entity_id='script.xxx'\n"
+                "  Trigger automation:     domain='automation',   service='trigger',         entity_id='automation.xxx'\n"
+                "  Send notification:      domain='notify',       service='mobile_app_phone', message='Hello', title='Alert'"
             ),
             inputSchema={
                 "type": "object",
                 "properties": {
                     "domain": {
                         "type": "string",
-                        "description": "Service domain, e.g. 'light', 'switch', 'climate', 'media_player', 'script', 'automation'.",
+                        "description": "Service domain, e.g. 'light', 'switch', 'climate', 'media_player', 'notify', 'script', 'automation', 'homeassistant'.",
                     },
                     "service": {
                         "type": "string",
-                        "description": "Service name, e.g. 'turn_on', 'turn_off', 'toggle', 'set_temperature', 'media_pause'.",
+                        "description": "Service name, e.g. 'turn_on', 'turn_off', 'toggle', 'set_temperature', 'media_pause', 'mobile_app_phone'.",
                     },
                     "entity_id": {
-                        "type": "string",
-                        "description": "Target entity ID, e.g. 'light.coffee_bar_light'. Use list_entities to find this if unknown.",
+                        "description": (
+                            "Target entity ID or list of entity IDs, e.g. 'light.coffee_bar_light' or "
+                            "['light.one', 'light.two']. Required for most services unless area_id or "
+                            "device_id is used instead. Omit for services that don't target entities (e.g. notify)."
+                        ),
+                        "oneOf": [
+                            {"type": "string"},
+                            {"type": "array", "items": {"type": "string"}},
+                        ],
+                    },
+                    "area_id": {
+                        "description": (
+                            "Target area name or list of area names, e.g. 'living_room' or ['kitchen', 'hallway']. "
+                            "Use with domain='homeassistant' to turn on/off all devices in an area, or with "
+                            "specific domains (light, switch, climate) to target all matching entities in an area."
+                        ),
+                        "oneOf": [
+                            {"type": "string"},
+                            {"type": "array", "items": {"type": "string"}},
+                        ],
+                    },
+                    "device_id": {
+                        "description": (
+                            "Target device ID or list of device IDs. Use when you need to target a specific "
+                            "physical device rather than individual entities. Device IDs can be found in HA "
+                            "under Settings → Devices."
+                        ),
+                        "oneOf": [
+                            {"type": "string"},
+                            {"type": "array", "items": {"type": "string"}},
+                        ],
                     },
                 },
-                "required": ["domain", "service", "entity_id"],
+                "required": ["domain", "service"],
                 "additionalProperties": True,
             },
         ),
@@ -736,7 +770,7 @@ async def list_tools() -> list[types.Tool]:
 async def call_tool(name: str, arguments: dict[str, Any]) -> list[types.TextContent]:
     error = _check_permission(name, arguments)
     if error:
-        return [types.TextContent(type="text", text=error)]
+        raise ValueError(error)
 
     if name == "invalidate_entity_cache":
         return _invalidate_entity_cache(arguments)
