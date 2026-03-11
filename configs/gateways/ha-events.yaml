@@ -1,0 +1,42 @@
+log:
+  stdout_log_level: INFO
+  log_file_level: DEBUG
+  log_file: ha-events-gateway.log
+
+!include ../../shared_config.yaml
+
+apps:
+  - name: ha_events_gateway_app
+    app_base_path: .
+    app_module: solace_agent_mesh.gateway.generic.app
+
+    broker:
+      <<: *broker_connection
+
+    app_config:
+      namespace: ${NAMESPACE}
+      gateway_id: ha-events-gateway
+      default_agent_name: OrchestratorAgent
+
+      session_service: *session_service
+      artifact_service: *artifact_service
+
+      gateway_adapter: gateways.ha_events.adapter.HAEventsAdapter
+      adapter_config:
+        mqtt_host: "${SOLACE_MQTT_HOST}"
+        mqtt_port: ${SOLACE_MQTT_PORT, 8883}
+        mqtt_username: "${SOLACE_BROKER_USERNAME}"
+        mqtt_password: "${SOLACE_BROKER_PASSWORD}"
+        mqtt_tls: ${SOLACE_MQTT_TLS, true}
+        subscribe_topics:
+          - "${HA_EVENTS_TOPIC, home/events/#}"
+        target_agent: "OrchestratorAgent"
+        response_topic_prefix: "${HA_EVENTS_RESPONSE_PREFIX, }"
+
+      system_purpose: >
+        You are SAM, monitoring HomeAssistant events. When an event arrives,
+        determine if it requires action or notification. For sensor threshold
+        crossings, device state changes, or automation triggers that warrant
+        a response, take the appropriate action concisely. Many events may
+        not require any action — in that case, respond with a brief summary
+        of what occurred and why no action was taken.
