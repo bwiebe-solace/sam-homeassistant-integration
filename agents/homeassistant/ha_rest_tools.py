@@ -261,14 +261,17 @@ async def list_tools() -> list[types.Tool]:
                 "Use this to answer questions about recent activity: whether an appliance ran, "
                 "when a sensor last changed, how a value trended over time, etc. "
                 "Returns a list of state entries with timestamps, each showing the value at that time. "
-                "Only significant state changes are returned by default (not every poll)."
+                "IMPORTANT: Always use list_entities with a name_filter first to discover the exact "
+                "entity_id — do not guess or construct entity IDs from the device name, as HA entity "
+                "IDs often include room prefixes and suffixes that are not obvious "
+                "(e.g. 'back hall light' may be 'light.back_hall_main_lights', not 'light.back_hall')."
             ),
             inputSchema={
                 "type": "object",
                 "properties": {
                     "entity_id": {
                         "type": "string",
-                        "description": "The entity ID to retrieve history for, e.g. 'sensor.laundry_vibration_sensor_x_axis'.",
+                        "description": "The exact entity ID to retrieve history for. Use list_entities to find this first.",
                     },
                     "hours_ago": {
                         "type": "number",
@@ -276,7 +279,7 @@ async def list_tools() -> list[types.Tool]:
                     },
                     "significant_changes_only": {
                         "type": "boolean",
-                        "description": "If true (default), only return entries where the state value actually changed. Set to false to see every recorded data point.",
+                        "description": "If true (default), only return entries where the state value actually changed. Set to false to see every recorded data point (e.g. for graphing sensor values over time).",
                     },
                 },
                 "required": ["entity_id"],
@@ -980,6 +983,26 @@ async def _get_entity_history(
     data = response.json()
     # API returns a list of lists (one per entity); flatten to the entity's list
     history = data[0] if data else []
+    if not history:
+        # Empty result most commonly means the entity_id doesn't exist in the recorder.
+        # Verify the entity exists so the caller can correct the ID if needed.
+        state_response = await client.get(f"{HA_URL}/api/states/{entity_id}")
+        if state_response.status_code == 404:
+            return [types.TextContent(
+                type="text",
+                text=(
+                    f"No history found for '{entity_id}' and the entity does not exist. "
+                    "The entity_id is likely wrong — use list_entities with a name_filter to find the correct one."
+                ),
+            )]
+        return [types.TextContent(
+            type="text",
+            text=(
+                f"No history found for '{entity_id}' in the requested time window. "
+                "The entity exists but has no recorded state changes in this period. "
+                "Try a longer hours_ago value, or set significant_changes_only=false."
+            ),
+        )]
     return [types.TextContent(type="text", text=json.dumps(history, indent=2))]
 
 
