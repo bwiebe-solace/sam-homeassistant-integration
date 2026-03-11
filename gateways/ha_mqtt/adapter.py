@@ -39,10 +39,10 @@ log = logging.getLogger(__name__)
 
 
 class HAMqttAdapterConfig(BaseModel):
-    mqtt_host: str = Field(..., description="Solace broker MQTT hostname.")
+    mqtt_host: str = Field("", description="Solace broker MQTT hostname. Leave empty to disable the gateway.")
     mqtt_port: int = Field(8883, description="Solace broker MQTT port (8883 for TLS).")
-    mqtt_username: str = Field(..., description="MQTT username.")
-    mqtt_password: str = Field(..., description="MQTT password.")
+    mqtt_username: str = Field("", description="MQTT username.")
+    mqtt_password: str = Field("", description="MQTT password.")
     mqtt_tls: bool = Field(True, description="Use TLS for the MQTT connection.")
     target_agent: str = Field(
         "OrchestratorAgent", description="SAM agent to route all requests to."
@@ -69,6 +69,11 @@ class HAMqttAdapter(GatewayAdapter):
 
     async def init(self, context: GatewayContext) -> None:
         self._context = context
+        if not context.adapter_config.mqtt_host:
+            log.info(
+                "HA MQTT gateway disabled — set SOLACE_MQTT_HOST to enable it"
+            )
+            return
         self._listener_task = asyncio.create_task(self._run_mqtt_listener())
         log.info("HA MQTT adapter initialised (namespace=%s)", context.namespace)
 

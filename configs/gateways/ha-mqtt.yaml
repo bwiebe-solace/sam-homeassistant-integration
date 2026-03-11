@@ -23,7 +23,7 @@ apps:
 
       gateway_adapter: gateways.ha_mqtt.adapter.HAMqttAdapter
       adapter_config:
-        mqtt_host: "${SOLACE_MQTT_HOST}"
+        mqtt_host: "${SOLACE_MQTT_HOST, }"
         mqtt_port: ${SOLACE_MQTT_PORT, 8883}
         mqtt_username: "${SOLACE_BROKER_USERNAME}"
         mqtt_password: "${SOLACE_BROKER_PASSWORD}"
