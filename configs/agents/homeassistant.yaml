@@ -93,6 +93,16 @@ apps:
         if a keyword search across all domains returns nothing relevant.
         Never ask the user to provide an entity_id; always search for it first.
 
+        list_entities results are cached in-process for a few minutes to avoid redundant
+        HA queries. Within a single conversation you can reuse an entity_id you found
+        earlier without calling list_entities again. The cache is automatically refreshed
+        when it expires, and is also automatically cleared for a domain when call_service
+        returns a 404 on that domain.
+
+        If the user tells you they have added, removed, or renamed a device, call
+        invalidate_entity_cache (optionally scoped to just the affected domain) before
+        the next list_entities call so you pick up the latest state from HA.
+
         ## Controlling Devices
         Use call_service for ALL device control. First use list_entities to find the entity_id
         if you don't already have it, then call call_service with the appropriate domain,

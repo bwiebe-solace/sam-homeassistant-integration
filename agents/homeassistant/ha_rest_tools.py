@@ -23,20 +23,37 @@ Tools:
   - delete_script:            Delete a script via DELETE /api/config/script/config/{id}
   - create_helper:            Create or update an input_* helper via POST /api/config/{type}/config/{id}
   - call_service:             Call any HA service via POST /api/services/{domain}/{service}
+  - invalidate_entity_cache:  Discard cached entity lists so the next lookup re-queries HA
   - list_dashboards:          List all Lovelace dashboards via WS lovelace/dashboards/list
   - get_dashboard_config:     Get Lovelace dashboard config via WS lovelace/config
   - update_dashboard_config:  Write Lovelace dashboard config via WS lovelace/config/save
+
+Entity cache
+------------
+list_entities results are cached in-process with a configurable TTL (default 5 minutes,
+set HA_ENTITY_CACHE_TTL_SECONDS in the environment to override).  The cache is keyed on
+the (domain, state, name_filter) triple so each distinct query is cached independently.
+
+The cache is intentionally in-process and ephemeral: it lives only as long as this MCP
+server process is running, which is the same lifetime as the agent session.  This means:
+
+  * No stale data survives a restart.
+  * Changes made in HA will be visible within one TTL window (worst case).
+  * call_service failures due to a missing/renamed entity automatically trigger a
+    single cache-busting retry so the LLM always gets a fresh view on error.
 """
 
 import asyncio
 import json
+import logging
 import os
 import re
+import time
 from datetime import datetime, timedelta, timezone
+from typing import Any
 
 import httpx
 import websockets
-from typing import Any
 
 from mcp.server import Server
 from mcp.server.stdio import stdio_server
@@ -49,6 +66,58 @@ _HEADERS = {
     "Authorization": f"Bearer {HA_TOKEN}",
     "Content-Type": "application/json",
 }
+
+# ── Entity cache ──────────────────────────────────────────────────────────────
+# Key: (domain, state_filter, name_filter) — all values normalised to str or "".
+# Value: (result_json_str, expire_monotonic_timestamp)
+_EntityCacheKey = tuple[str, str, str]
+_ENTITY_CACHE: dict[_EntityCacheKey, tuple[str, float]] = {}
+_ENTITY_CACHE_TTL: float = float(os.environ.get("HA_ENTITY_CACHE_TTL_SECONDS", "300"))
+
+_cache_log = logging.getLogger("entity_cache")
+if os.environ.get("HA_ENTITY_CACHE_LOG", "false").lower() == "true":
+    _cache_log.setLevel(logging.DEBUG)
+    _cache_log.propagate = False
+    _h = logging.FileHandler("entity-cache.log")
+    _h.setFormatter(logging.Formatter("%(asctime)s %(message)s"))
+    _cache_log.addHandler(_h)
+
+
+def _cache_key(domain: str | None, state: str | None, name_filter: str | None) -> _EntityCacheKey:
+    return (domain or "", state or "", (name_filter or "").lower())
+
+
+def _cache_get(key: _EntityCacheKey) -> str | None:
+    """Return the cached JSON string if the entry exists and is still fresh, else None."""
+    entry = _ENTITY_CACHE.get(key)
+    if entry is None:
+        _cache_log.debug("MISS    %s", key)
+        return None
+    result, expires = entry
+    if time.monotonic() > expires:
+        del _ENTITY_CACHE[key]
+        _cache_log.debug("EXPIRED %s", key)
+        return None
+    _cache_log.debug("HIT     %s", key)
+    return result
+
+
+def _cache_set(key: _EntityCacheKey, result: str) -> None:
+    _ENTITY_CACHE[key] = (result, time.monotonic() + _ENTITY_CACHE_TTL)
+
+
+def _cache_invalidate(domain: str | None = None) -> int:
+    """Remove cache entries.  If domain is given, only remove entries for that domain.
+    Returns the number of entries removed."""
+    if domain is None:
+        count = len(_ENTITY_CACHE)
+        _ENTITY_CACHE.clear()
+        return count
+    keys_to_remove = [k for k in _ENTITY_CACHE if k[0] == domain]
+    for k in keys_to_remove:
+        del _ENTITY_CACHE[k]
+    return len(keys_to_remove)
+
 
 # ── Permission flags (read once at startup from env) ──────────────────────────
 _READONLY = os.environ.get("HA_READONLY", "false").lower() == "true"
@@ -77,6 +146,8 @@ _ENABLED_TOOLS: frozenset[str] = frozenset(
         "get_calendar_events", "list_services", "get_system_info",
         "get_error_log", "get_camera_snapshot_url", "check_config",
         "list_dashboards", "get_dashboard_config",
+        # Cache management — always available
+        "invalidate_entity_cache",
     }
     | ({"call_service"} if _ALLOW_DEVICE_CONTROL else set())
     | ({"create_automation", "create_script", "create_helper", "update_dashboard_config"} if _ALLOW_CONFIG_WRITE else set())
@@ -560,6 +631,31 @@ async def list_tools() -> list[types.Tool]:
             },
         ),
         types.Tool(
+            name="invalidate_entity_cache",
+            description=(
+                "Discard the in-process entity cache so the next list_entities call "
+                "re-queries HomeAssistant for fresh data. "
+                "Call this when the user tells you they have added, removed, or renamed "
+                "a device or entity, or after a call_service returns an error that suggests "
+                "the entity no longer exists. "
+                "Optionally restrict invalidation to a single domain (e.g. 'light') to "
+                "leave other domains' cached data intact."
+            ),
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "domain": {
+                        "type": "string",
+                        "description": (
+                            "If provided, only cache entries for this domain are removed. "
+                            "Omit to clear the entire entity cache."
+                        ),
+                    },
+                },
+                "additionalProperties": False,
+            },
+        ),
+        types.Tool(
             name="list_dashboards",
             description=(
                 "List all Lovelace dashboards configured in HomeAssistant. "
@@ -642,6 +738,9 @@ async def call_tool(name: str, arguments: dict[str, Any]) -> list[types.TextCont
     if error:
         return [types.TextContent(type="text", text=error)]
 
+    if name == "invalidate_entity_cache":
+        return _invalidate_entity_cache(arguments)
+
     async with httpx.AsyncClient(headers=_HEADERS, timeout=30) as client:
         if name == "list_entities":
             return await _list_entities(client, arguments)
@@ -699,6 +798,11 @@ async def _list_entities(
     if domain and not _DOMAIN_RE.fullmatch(domain):
         return [types.TextContent(type="text", text=f"Invalid domain '{domain}': must contain only lowercase letters and underscores.")]
 
+    key = _cache_key(domain, state_filter, name_filter)
+    cached = _cache_get(key)
+    if cached is not None:
+        return [types.TextContent(type="text", text=cached)]
+
     loop_src = f"states.{domain}" if domain else "states"
     conditions = []
     variables: dict[str, Any] = {}
@@ -744,6 +848,7 @@ async def _list_entities(
     except json.JSONDecodeError:
         result = raw
 
+    _cache_set(key, result)
     return [types.TextContent(type="text", text=result)]
 
 
@@ -1063,6 +1168,10 @@ async def _call_service(
 
     response = await client.post(f"{HA_URL}/api/services/{domain}/{service}", json=payload)
     if response.is_error:
+        # A 404 on the entity most likely means the cache has a stale entity_id.
+        # Evict the affected domain so the next list_entities re-queries HA.
+        if response.status_code == 404:
+            _cache_invalidate(domain)
         return _http_error(response, "call_service")
 
     try:
@@ -1070,6 +1179,17 @@ async def _call_service(
     except Exception:  # pylint: disable=broad-exception-caught
         result = response.text.strip() or "Service called successfully."
     return [types.TextContent(type="text", text=result)]
+
+
+def _invalidate_entity_cache(args: dict[str, Any]) -> list[types.TextContent]:
+    domain = args.get("domain")
+    count = _cache_invalidate(domain)
+    scope = f"domain '{domain}'" if domain else "all domains"
+    noun = "entry" if count == 1 else "entries"
+    return [types.TextContent(
+        type="text",
+        text=f"Entity cache cleared for {scope} ({count} {noun} removed).",
+    )]
 
 
 async def _ha_ws_command(command: dict[str, Any], timeout: float = 30.0) -> dict[str, Any]:
