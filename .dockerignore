@@ -1,0 +1,12 @@
+custom_components/
+.github/
+README.md
+hacs.json
+CLAUDE.md
+NOTES_FOR_CLAUDE.md
+.env*
+docker-compose.yml
+.venv/
+**/__pycache__/
+**/*.pyc
+**/*.pyo

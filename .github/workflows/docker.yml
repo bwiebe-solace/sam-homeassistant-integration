@@ -4,6 +4,14 @@ on:
   push:
     branches:
       - main
+    paths:
+      - "agents/**"
+      - "configs/**"
+      - "gateways/**"
+      - "shared_config.yaml"
+      - "requirements.txt"
+      - "Dockerfile"
+      - ".github/workflows/docker.yml"
   workflow_dispatch:
 
 env:
