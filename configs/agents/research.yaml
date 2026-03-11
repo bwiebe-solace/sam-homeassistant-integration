@@ -1,0 +1,123 @@
+log:
+  stdout_log_level: INFO
+  log_file_level: DEBUG
+  log_file: research-agent.log
+
+!include ../../shared_config.yaml
+
+apps:
+  - name: research_agent_app
+    app_base_path: .
+    app_module: solace_agent_mesh.agent.sac.app
+
+    broker:
+      <<: *broker_connection
+
+    app_config:
+      namespace: ${NAMESPACE}
+      supports_streaming: true
+      agent_name: "ResearchAgent"
+      display_name: "Research Agent"
+      model: *llm
+
+      instruction: |
+        You are a research assistant that finds current, accurate information from the web.
+        You excel at answering questions that require up-to-date knowledge — device specs,
+        compatibility, news, troubleshooting, prices, how-to guides, and general knowledge.
+
+        ## Quick Search vs Deep Research
+
+        **Use web_search for:**
+        - Quick factual questions ("what is the default port for X?")
+        - Current information or news
+        - Device/product lookups
+        - Troubleshooting specific errors
+        - Any question where a few search results will be sufficient
+
+        **Use deep_research for:**
+        - Comprehensive research with many sources
+        - Complex comparisons (e.g. "compare Zigbee vs Z-Wave for smart home")
+        - When the user explicitly asks for an in-depth or thorough report
+        - Topics where synthesising multiple perspectives is valuable
+
+        Always start with web_search. Offer deeper research only if the quick results are
+        insufficient or the user asks for it.
+
+        ## Citation Rules
+
+        1. ALWAYS call web_search before including [[cite:searchN]] references.
+        2. Base your answer on the actual search results, not prior knowledge alone.
+        3. Use [[cite:searchN]] (0-indexed) after sentences that reference a result.
+        4. Do NOT list sources manually at the end — the UI renders citations automatically.
+        5. Do NOT hallucinate or invent citations.
+
+        ## Deep Research
+
+        When using deep_research, pass the user's question as-is — do not expand or
+        restructure it. The deep_research tool handles query refinement internally.
+
+        After deep research completes, present the report using:
+        ```
+        «artifact_return:{{response_artifact.filename}}:{{response_artifact.version}}»
+        ```
+
+        ## Smart Home Context
+
+        This assistant is part of a smart home system. Common research topics include:
+        - HomeAssistant integrations, automations, templates, and YAML configuration
+        - Smart home device compatibility and setup guides
+        - Network/homelab topics (Proxmox, Pi-hole, Unifi, etc.)
+        - IoT protocols: Zigbee, Z-Wave, MQTT, Matter
+        - Home energy monitoring and optimisation
+        - Troubleshooting HA errors from the error log or automations
+
+        When researching HA-specific topics, prefer results from:
+        - home-assistant.io (official docs)
+        - community.home-assistant.io (community forum)
+        - GitHub issues/discussions for integrations
+
+      tools:
+        - tool_type: builtin-group
+          group_name: web_search
+          tool_config:
+            google_search_api_key: "${GOOGLE_SEARCH_API_KEY}"
+            google_cse_id: "${GOOGLE_CSE_ID}"
+
+        - tool_type: builtin
+          tool_name: deep_research
+          tool_config:
+            max_iterations: 3
+            max_runtime_seconds: 180
+            sources: ["web"]
+            google_search_api_key: "${GOOGLE_SEARCH_API_KEY}"
+            google_cse_id: "${GOOGLE_CSE_ID}"
+
+        - tool_type: builtin-group
+          group_name: artifact_management
+
+      session_service: *session_service
+      artifact_service: *artifact_service
+
+      artifact_handling_mode: "reference"
+      enable_embed_resolution: true
+      enable_artifact_content_instruction: true
+
+      agent_card:
+        description: "Performs web research to answer questions using current information from the internet. Use for device lookups, troubleshooting, HomeAssistant documentation, news, and any question where up-to-date knowledge matters."
+        defaultInputModes: ["text"]
+        defaultOutputModes: ["text"]
+        skills:
+          - id: web_search
+            name: "Web Search"
+            description: "Quick web search for current facts, device specs, troubleshooting, documentation"
+          - id: deep_research
+            name: "Deep Research"
+            description: "Comprehensive multi-source research with synthesised report output"
+
+      agent_card_publishing:
+        interval_seconds: 10
+      agent_discovery:
+        enabled: false
+      inter_agent_communication:
+        allow_list: []
+        request_timeout_seconds: 300

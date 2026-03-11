@@ -1,12 +1,19 @@
 services:
   sam:
-    build: .
+    image: ghcr.io/bwiebe-solace/sam-homeassistant-integration:latest
+    # To build locally instead: comment out image above and uncomment below
+    # build: .
     ports:
       - "8000:8000"
     env_file: .env
+    environment:
+      SESSION_DATABASE_URL: sqlite:////data/session.db
+      WEB_UI_GATEWAY_DATABASE_URL: sqlite:////data/webui_gateway.db
+      ORCHESTRATOR_DATABASE_URL: sqlite:////data/orchestrator.db
+      ARTIFACT_BASE_PATH: /data/artifacts
     volumes:
-      - sam-artifacts:/tmp/sam-homeassistant
+      - sam-data:/data
     restart: unless-stopped
 
 volumes:
-  sam-artifacts:
+  sam-data:

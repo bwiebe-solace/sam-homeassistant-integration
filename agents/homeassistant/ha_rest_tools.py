@@ -24,6 +24,9 @@ Tools:
   - create_helper:            Create or update an input_* helper via POST /api/config/{type}/config/{id}
   - call_service:             Call any HA service via POST /api/services/{domain}/{service}
   - invalidate_entity_cache:  Discard cached entity lists so the next lookup re-queries HA
+  - list_dashboards:          List all Lovelace dashboards via WS lovelace/dashboards/list
+  - get_dashboard_config:     Get Lovelace dashboard config via WS lovelace/config
+  - update_dashboard_config:  Write Lovelace dashboard config via WS lovelace/config/save
 
 Entity cache
 ------------
@@ -49,6 +52,8 @@ from datetime import datetime, timedelta, timezone
 from typing import Any
 
 import httpx
+import websockets
+
 from mcp.server import Server
 from mcp.server.stdio import stdio_server
 from mcp import types
@@ -128,11 +133,12 @@ _ENABLED_TOOLS: frozenset[str] = frozenset(
         "get_automation_config", "get_script_config", "get_logbook",
         "get_calendar_events", "list_services", "get_system_info",
         "get_error_log", "get_camera_snapshot_url", "check_config",
+        "list_dashboards", "get_dashboard_config",
         # Cache management — always available
         "invalidate_entity_cache",
     }
     | ({"call_service"} if _ALLOW_DEVICE_CONTROL else set())
-    | ({"create_automation", "create_script", "create_helper"} if _ALLOW_CONFIG_WRITE else set())
+    | ({"create_automation", "create_script", "create_helper", "update_dashboard_config"} if _ALLOW_CONFIG_WRITE else set())
     | ({"delete_automation", "delete_script"} if _ALLOW_DELETES else set())
 )
 
@@ -140,7 +146,7 @@ _SCRIPT_DOMAINS = {"script", "automation"}
 _DOMAIN_RE = re.compile(r"^[a-z_]+$")
 
 
-def _check_permission(name: str, arguments: dict) -> str | None:
+def _check_permission(name: str, arguments: dict[str, Any]) -> str | None:
     """Return an error string if the call is not permitted, else None."""
     if name not in _ENABLED_TOOLS:
         return f"'{name}' is disabled by the deployment configuration."
@@ -637,12 +643,85 @@ async def list_tools() -> list[types.Tool]:
                 "additionalProperties": False,
             },
         ),
+        types.Tool(
+            name="list_dashboards",
+            description=(
+                "List all Lovelace dashboards configured in HomeAssistant. "
+                "Returns each dashboard's url_path, title, icon, and whether it requires admin access. "
+                "The default dashboard has url_path=null. "
+                "Use this before get_dashboard_config or update_dashboard_config to discover available dashboards."
+            ),
+            inputSchema={
+                "type": "object",
+                "properties": {},
+                "additionalProperties": False,
+            },
+        ),
+        types.Tool(
+            name="get_dashboard_config",
+            description=(
+                "Get the full Lovelace configuration for a HomeAssistant dashboard. "
+                "Returns the dashboard config as a JSON object containing views, cards, and layout. "
+                "Always call this before update_dashboard_config so you can base changes on the existing config. "
+                "The config can be large for complex dashboards. "
+                "Omit url_path to get the default dashboard, or provide the url_path for a named dashboard. "
+                "The url_path is the segment after the HA base URL in the browser address bar — "
+                "e.g. for 'https://homeassistant.local/dashboard-custom/0' the url_path is 'dashboard-custom' "
+                "(the trailing '/0' is a view index, not part of the url_path)."
+            ),
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "url_path": {
+                        "type": "string",
+                        "description": (
+                            "The dashboard url_path from list_dashboards, e.g. 'lovelace-mobile'. "
+                            "Omit to get the default dashboard."
+                        ),
+                    },
+                },
+                "additionalProperties": False,
+            },
+        ),
+        types.Tool(
+            name="update_dashboard_config",
+            description=(
+                "Write a new Lovelace configuration for a HomeAssistant dashboard. "
+                "This performs a FULL REPLACEMENT of the dashboard config — partial updates are not supported by the HA API. "
+                "You MUST call get_dashboard_config first to read the current config, then modify it before writing. "
+                "The config must be a valid Lovelace config object with at minimum a 'views' key containing a list of view objects. "
+                "Omit url_path for the default dashboard, or provide it for a named dashboard."
+            ),
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "config": {
+                        "type": "object",
+                        "description": (
+                            "The complete Lovelace dashboard config to write. Must include 'views' (list). "
+                            "Each view has: title (string), path (string, optional), icon (string, optional), "
+                            "cards (list of card objects). "
+                            "This replaces the entire dashboard config."
+                        ),
+                    },
+                    "url_path": {
+                        "type": "string",
+                        "description": (
+                            "The dashboard url_path from list_dashboards, e.g. 'lovelace-mobile'. "
+                            "Omit to update the default dashboard."
+                        ),
+                    },
+                },
+                "required": ["config"],
+                "additionalProperties": False,
+            },
+        ),
     ]
     return [t for t in all_tools if t.name in _ENABLED_TOOLS]
 
 
 @server.call_tool()
-async def call_tool(name: str, arguments: dict) -> list[types.TextContent]:
+async def call_tool(name: str, arguments: dict[str, Any]) -> list[types.TextContent]:
     error = _check_permission(name, arguments)
     if error:
         return [types.TextContent(type="text", text=error)]
@@ -687,12 +766,18 @@ async def call_tool(name: str, arguments: dict) -> list[types.TextContent]:
             return await _create_helper(client, arguments)
         elif name == "call_service":
             return await _call_service(client, arguments)
+        elif name == "list_dashboards":
+            return await _list_dashboards(client, arguments)
+        elif name == "get_dashboard_config":
+            return await _get_dashboard_config(client, arguments)
+        elif name == "update_dashboard_config":
+            return await _update_dashboard_config(client, arguments)
         else:
             raise ValueError(f"Unknown tool: {name}")
 
 
 async def _list_entities(
-    client: httpx.AsyncClient, args: dict
+    client: httpx.AsyncClient, args: dict[str, Any]
 ) -> list[types.TextContent]:
     domain = args.get("domain")
     state_filter = args.get("state")
@@ -756,7 +841,7 @@ async def _list_entities(
 
 
 async def _get_entity_state(
-    client: httpx.AsyncClient, args: dict
+    client: httpx.AsyncClient, args: dict[str, Any]
 ) -> list[types.TextContent]:
     entity_id = args["entity_id"]
     response = await client.get(f"{HA_URL}/api/states/{entity_id}")
@@ -766,7 +851,7 @@ async def _get_entity_state(
 
 
 async def _get_entity_history(
-    client: httpx.AsyncClient, args: dict
+    client: httpx.AsyncClient, args: dict[str, Any]
 ) -> list[types.TextContent]:
     entity_id = args["entity_id"]
     hours_ago = args.get("hours_ago", 24)
@@ -774,7 +859,7 @@ async def _get_entity_history(
 
     start_time = datetime.now(timezone.utc) - timedelta(hours=hours_ago)
 
-    params: dict = {
+    params: dict[str, Any] = {
         "filter_entity_id": entity_id,
         "minimal_response": "true",
     }
@@ -795,7 +880,7 @@ async def _get_entity_history(
 
 
 async def _get_automation_config(
-    client: httpx.AsyncClient, args: dict
+    client: httpx.AsyncClient, args: dict[str, Any]
 ) -> list[types.TextContent]:
     entity_id = args["entity_id"]
 
@@ -804,7 +889,7 @@ async def _get_automation_config(
         return _http_error(state_response, "get_automation_config")
     state = state_response.json()
 
-    automation_id = state.get("attributes", {}).get("id")
+    automation_id = state.get('attributes', {}).get("id")
     if not automation_id:
         return [types.TextContent(
             type="text",
@@ -819,7 +904,7 @@ async def _get_automation_config(
 
 
 async def _get_script_config(
-    client: httpx.AsyncClient, args: dict
+    client: httpx.AsyncClient, args: dict[str, Any]
 ) -> list[types.TextContent]:
     entity_id = args["entity_id"]
 
@@ -838,7 +923,7 @@ async def _get_script_config(
 
 
 async def _get_logbook(
-    client: httpx.AsyncClient, args: dict
+    client: httpx.AsyncClient, args: dict[str, Any]
 ) -> list[types.TextContent]:
     entity_id = args.get("entity_id")
     hours_ago = args.get("hours_ago", 24)
@@ -846,7 +931,7 @@ async def _get_logbook(
     now = datetime.now(timezone.utc)
     start = now - timedelta(hours=hours_ago)
 
-    params: dict = {"end_time": now.isoformat()}
+    params: dict[str, Any] = {"end_time": now.isoformat()}
     if entity_id:
         params["entity_id"] = entity_id
 
@@ -857,7 +942,7 @@ async def _get_logbook(
 
 
 async def _get_calendar_events(
-    client: httpx.AsyncClient, args: dict
+    client: httpx.AsyncClient, args: dict[str, Any]
 ) -> list[types.TextContent]:
     calendar_entity_id = args.get("calendar_entity_id")
     days_ahead = args.get("days_ahead", 7)
@@ -881,7 +966,7 @@ async def _get_calendar_events(
 
 
 async def _list_services(
-    client: httpx.AsyncClient, args: dict
+    client: httpx.AsyncClient, args: dict[str, Any]
 ) -> list[types.TextContent]:
     domain = args.get("domain")
 
@@ -897,7 +982,7 @@ async def _list_services(
 
 
 async def _get_system_info(  # pylint: disable=unused-argument
-    client: httpx.AsyncClient, args: dict
+    client: httpx.AsyncClient, args: dict[str, Any]
 ) -> list[types.TextContent]:
     response = await client.get(f"{HA_URL}/api/config")
     if response.is_error:
@@ -906,7 +991,7 @@ async def _get_system_info(  # pylint: disable=unused-argument
 
 
 async def _get_error_log(
-    client: httpx.AsyncClient, args: dict
+    client: httpx.AsyncClient, args: dict[str, Any]
 ) -> list[types.TextContent]:
     tail_lines = max(1, int(args.get("tail_lines", 50)))
 
@@ -920,7 +1005,7 @@ async def _get_error_log(
 
 
 async def _get_camera_snapshot_url(
-    client: httpx.AsyncClient, args: dict
+    client: httpx.AsyncClient, args: dict[str, Any]
 ) -> list[types.TextContent]:
     camera_entity_id = args["camera_entity_id"]
 
@@ -929,7 +1014,7 @@ async def _get_camera_snapshot_url(
         return _http_error(state_response, "get_camera_snapshot_url")
     state = state_response.json()
 
-    access_token = state.get("attributes", {}).get("access_token")
+    access_token = state.get('attributes', {}).get("access_token")
     if access_token:
         url = f"{HA_URL}/api/camera_proxy/{camera_entity_id}?token={access_token}"
     else:
@@ -942,7 +1027,7 @@ async def _get_camera_snapshot_url(
 
 
 async def _check_config(  # pylint: disable=unused-argument
-    client: httpx.AsyncClient, args: dict
+    client: httpx.AsyncClient, args: dict[str, Any]
 ) -> list[types.TextContent]:
     response = await client.post(f"{HA_URL}/api/config/core/check_config")
     if response.is_error:
@@ -951,7 +1036,7 @@ async def _check_config(  # pylint: disable=unused-argument
 
 
 async def _create_automation(
-    client: httpx.AsyncClient, args: dict
+    client: httpx.AsyncClient, args: dict[str, Any]
 ) -> list[types.TextContent]:
     config = args["config"]
     automation_id = args.get("automation_id")
@@ -977,7 +1062,7 @@ async def _create_automation(
 
 
 async def _delete_automation(
-    client: httpx.AsyncClient, args: dict
+    client: httpx.AsyncClient, args: dict[str, Any]
 ) -> list[types.TextContent]:
     automation_id = args["automation_id"]
 
@@ -995,7 +1080,7 @@ async def _delete_automation(
 
 
 async def _create_script(
-    client: httpx.AsyncClient, args: dict
+    client: httpx.AsyncClient, args: dict[str, Any]
 ) -> list[types.TextContent]:
     script_id = args["script_id"]
     config = args["config"]
@@ -1016,7 +1101,7 @@ async def _create_script(
 
 
 async def _delete_script(
-    client: httpx.AsyncClient, args: dict
+    client: httpx.AsyncClient, args: dict[str, Any]
 ) -> list[types.TextContent]:
     script_id = args["script_id"]
 
@@ -1034,7 +1119,7 @@ async def _delete_script(
 
 
 async def _create_helper(
-    client: httpx.AsyncClient, args: dict
+    client: httpx.AsyncClient, args: dict[str, Any]
 ) -> list[types.TextContent]:
     helper_type = args["helper_type"]
     helper_id = args["helper_id"]
@@ -1063,7 +1148,7 @@ async def _create_helper(
 
 
 async def _call_service(
-    client: httpx.AsyncClient, args: dict
+    client: httpx.AsyncClient, args: dict[str, Any]
 ) -> list[types.TextContent]:
     domain = args["domain"]
     service = args["service"]
@@ -1092,6 +1177,77 @@ def _invalidate_entity_cache(args: dict[str, Any]) -> list[types.TextContent]:
     return [types.TextContent(
         type="text",
         text=f"Entity cache cleared for {scope} ({count} {noun} removed).",
+    )]
+
+
+async def _ha_ws_command(command: dict[str, Any], timeout: float = 30.0) -> dict[str, Any]:
+    """Make a single authenticated command call to the HA WebSocket API."""
+    ws_url = HA_URL.replace("https://", "wss://").replace("http://", "ws://")
+    ws_url = f"{ws_url}/api/websocket"
+
+    async with websockets.connect(ws_url) as ws:
+        msg = json.loads(await asyncio.wait_for(ws.recv(), timeout=timeout))
+        if msg.get("type") != "auth_required":
+            raise RuntimeError(f"Expected auth_required, got: {msg}")
+
+        await ws.send(json.dumps({"type": "auth", "access_token": HA_TOKEN}))
+        msg = json.loads(await asyncio.wait_for(ws.recv(), timeout=timeout))
+        if msg.get("type") != "auth_ok":
+            raise RuntimeError(f"Authentication failed: {msg.get('message', msg)}")
+
+        await ws.send(json.dumps({"id": 1, **command}))
+        while True:
+            msg = json.loads(await asyncio.wait_for(ws.recv(), timeout=timeout))
+            if msg.get("id") == 1:
+                return msg
+
+
+async def _list_dashboards(  # pylint: disable=unused-argument
+    client: httpx.AsyncClient, args: dict[str, Any]
+) -> list[types.TextContent]:
+    try:
+        result = await _ha_ws_command({"type": "lovelace/dashboards/list"})
+    except Exception as exc:  # pylint: disable=broad-exception-caught
+        return [types.TextContent(type="text", text=f"list_dashboards error: {exc}")]
+    if not result.get("success"):
+        return [types.TextContent(type="text", text=f"list_dashboards failed: {result.get('error', result)}")]
+    return [types.TextContent(type="text", text=json.dumps(result.get("result", []), indent=2))]
+
+
+async def _get_dashboard_config(  # pylint: disable=unused-argument
+    client: httpx.AsyncClient, args: dict[str, Any]
+) -> list[types.TextContent]:
+    url_path = args.get("url_path")
+    cmd: dict[str, Any] = {"type": "lovelace/config"}
+    if url_path:
+        cmd["url_path"] = url_path
+    try:
+        result = await _ha_ws_command(cmd)
+    except Exception as exc:  # pylint: disable=broad-exception-caught
+        return [types.TextContent(type="text", text=f"get_dashboard_config error: {exc}")]
+    if not result.get("success"):
+        return [types.TextContent(type="text", text=f"get_dashboard_config failed: {result.get('error', result)}")]
+    return [types.TextContent(type="text", text=json.dumps(result.get("result", {}), indent=2))]
+
+
+async def _update_dashboard_config(  # pylint: disable=unused-argument
+    client: httpx.AsyncClient, args: dict[str, Any]
+) -> list[types.TextContent]:
+    config = args["config"]
+    url_path = args.get("url_path")
+    cmd: dict[str, Any] = {"type": "lovelace/config/save", "config": config}
+    if url_path:
+        cmd["url_path"] = url_path
+    try:
+        result = await _ha_ws_command(cmd)
+    except Exception as exc:  # pylint: disable=broad-exception-caught
+        return [types.TextContent(type="text", text=f"update_dashboard_config error: {exc}")]
+    if not result.get("success"):
+        return [types.TextContent(type="text", text=f"update_dashboard_config failed: {result.get('error', result)}")]
+    dashboard_label = url_path or "default"
+    return [types.TextContent(
+        type="text",
+        text=f"Dashboard '{dashboard_label}' updated successfully.",
     )]
 
 

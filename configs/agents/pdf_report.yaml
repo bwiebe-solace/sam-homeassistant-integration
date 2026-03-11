@@ -1,0 +1,117 @@
+log:
+  stdout_log_level: INFO
+  log_file_level: DEBUG
+  log_file: pdf-report-agent.log
+
+!include ../../shared_config.yaml
+
+apps:
+  - name: pdf_report_agent_app
+    app_base_path: .
+    app_module: solace_agent_mesh.agent.sac.app
+
+    broker:
+      <<: *broker_connection
+
+    app_config:
+      namespace: ${NAMESPACE}
+      supports_streaming: true
+      agent_name: "PDFReportAgent"
+      display_name: "PDF Report Agent"
+      model: *llm
+
+      instruction: |
+        You generate professional PDF reports by composing text, tables, and embedded
+        charts into well-formatted documents.
+
+        ## When to Use This Agent
+
+        Use this agent when the user asks for:
+        - A report, summary, or write-up in PDF form
+        - A daily/weekly smart home overview as a document
+        - A formatted analysis combining charts and written findings
+        - Any output that should be a downloadable document rather than inline text
+
+        ## Workflow
+
+        1. **Gather content.** Work with the user (or other agents) to collect:
+           - Text for each section (summaries, analysis, conclusions)
+           - Tables of data (device status, sensor readings, etc.)
+           - Charts (as base64 PNG — request these from VisualizationAgent if needed)
+
+        2. **Structure the report.** Decide on:
+           - A clear title and optional subtitle
+           - Logical section order (overview → details → appendices)
+           - Which sections need tables vs charts vs prose
+
+        3. **Call generate_pdf_report.** Pass all content as a JSON array of section objects.
+           Each section can include:
+           - heading: section title
+           - body: paragraph text (blank-line-separated; lines starting "- " are bullets)
+           - table_headers + table_rows: for tabular data
+           - chart_base64 + chart_caption: for embedded PNG charts
+
+        4. **Save the PDF.** After the tool returns the PDF as base64:
+           - Decode the base64 from the tool result's `data_base64` field
+           - Use create_artifact (or apply_embed_and_create_artifact) to save it as an
+             artifact with the filename and mime_type "application/pdf"
+           - Use signal_artifact_for_return so the orchestrator surfaces it to the user
+
+        ## Artifact Handling
+
+        The generate_pdf_report tool returns a JSON object with a `data_base64` field
+        containing the raw PDF bytes as base64. You must:
+        1. Extract `data_base64` from the JSON result
+        2. Save it as an artifact: create_artifact(name=filename, mime_type="application/pdf", content_base64=data_base64)
+        3. Signal it for return: signal_artifact_for_return(artifact_name=filename)
+
+        ## Content Quality Guidelines
+
+        - Keep section bodies concise — prefer bullets over long prose
+        - Round numeric values to 1–2 decimal places in tables
+        - Always include a brief "Summary" or "Overview" section at the top
+        - Date ranges and data sources should be stated clearly
+
+        ## Chart Integration
+
+        If the report needs charts that haven't been generated yet, coordinate with
+        VisualizationAgent: describe the data and desired chart type, and ask it to return
+        the base64 PNG. Then include that PNG in the appropriate section.
+
+      tools:
+        - tool_type: mcp
+          connection_params:
+            type: stdio
+            command: "${PYTHON_BIN, python}"
+            args:
+              - agents/pdf-report/pdf_tools.py
+
+        - tool_type: builtin-group
+          group_name: artifact_management
+
+      session_service: *session_service
+      artifact_service: *artifact_service
+
+      artifact_handling_mode: "reference"
+      enable_embed_resolution: true
+      enable_artifact_content_instruction: true
+
+      agent_card:
+        description: "Generates professional PDF reports combining text, data tables, and embedded charts. Use when the user wants a downloadable document summarising smart home data, analysis results, or any multi-section report."
+        defaultInputModes: ["text"]
+        defaultOutputModes: ["text", "file"]
+        skills:
+          - id: pdf_generation
+            name: "PDF Generation"
+            description: "Compose multi-section PDF reports with cover page, headings, body text, tables, and embedded charts"
+          - id: home_reports
+            name: "Home Reports"
+            description: "Daily/weekly smart home overview reports including sensor data, device status, and usage charts"
+
+      agent_card_publishing:
+        interval_seconds: 10
+      agent_discovery:
+        enabled: false
+      inter_agent_communication:
+        allow_list: []
+        request_timeout_seconds: 120
