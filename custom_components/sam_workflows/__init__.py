@@ -124,7 +124,7 @@ class _MQTTManager:
         await self._client.publish(topic, payload=payload, qos=qos)
 
     async def _run(self) -> None:
-        data = self._entry.data
+        data = _entry_config(self._entry)
         tls_context = ssl.create_default_context() if data.get("mqtt_tls", True) else None
         reconnect_interval = 5
         client_id = f"ha-sam-{self._entry.entry_id[:8]}"
@@ -251,10 +251,20 @@ async def async_migrate_entry(hass: HomeAssistant, config_entry: ConfigEntry) ->
     return True
 
 
+def _entry_config(entry: ConfigEntry) -> dict:
+    """Merge entry data with options — options take precedence."""
+    return {**entry.data, **entry.options}
+
+
+async def _async_reload_entry(hass: HomeAssistant, entry: ConfigEntry) -> None:
+    await hass.config_entries.async_reload(entry.entry_id)
+
+
 async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     """Set up SAM Workflows from a config entry."""
-    namespace: str = entry.data["namespace"]
-    timeout_seconds: int = entry.data.get("timeout_seconds", 30)
+    cfg = _entry_config(entry)
+    namespace: str = cfg["namespace"]
+    timeout_seconds: int = cfg.get("timeout_seconds", 30)
 
     pending_conversations: dict[str, asyncio.Future[str]] = {}
     registered_workflows: dict[str, str] = {}
@@ -265,6 +275,8 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         "pending_conversations": pending_conversations,
         "registered_workflows": registered_workflows,
     }
+
+    entry.async_on_unload(entry.add_update_listener(_async_reload_entry))
 
     manager = _MQTTManager(hass, entry, namespace, pending_conversations, registered_workflows)
     manager.start()
@@ -290,7 +302,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     )
 
     platforms = list(_ALWAYS_PLATFORMS)
-    if entry.data.get("sam_url"):
+    if cfg.get("sam_url"):
         platforms.extend(_SPEECH_PLATFORMS)
     await hass.config_entries.async_forward_entry_setups(entry, platforms)
     hass.data[DOMAIN][entry.entry_id]["platforms"] = platforms
