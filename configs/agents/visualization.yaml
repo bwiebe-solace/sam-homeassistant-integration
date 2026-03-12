@@ -144,7 +144,7 @@ apps:
             description: "Hour-of-day and day-of-week activity heatmaps"
 
       agent_card_publishing:
-        interval_seconds: 10
+        interval_seconds: 60
       agent_discovery:
         enabled: false
       inter_agent_communication:

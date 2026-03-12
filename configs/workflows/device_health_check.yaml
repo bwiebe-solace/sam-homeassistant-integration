@@ -109,5 +109,5 @@ apps:
       session_service: *session_service
       artifact_service: *artifact_service
 
-      agent_card_publishing: { interval_seconds: 10 }
+      agent_card_publishing: { interval_seconds: 60 }
       agent_discovery: { enabled: true }

@@ -371,7 +371,7 @@ apps:
             description: "Read, generate, and update Lovelace dashboards"
 
       agent_card_publishing:
-        interval_seconds: 10
+        interval_seconds: 60
       agent_discovery:
         enabled: false
       inter_agent_communication:
