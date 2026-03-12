@@ -55,6 +55,7 @@ import logging
 import os
 import re
 import time
+import uuid
 from datetime import datetime, timedelta, timezone
 from typing import Any
 
@@ -1166,13 +1167,9 @@ async def _create_automation(
     client: httpx.AsyncClient, args: dict[str, Any]
 ) -> list[types.TextContent]:
     config = args["config"]
-    automation_id = args.get("automation_id")
+    automation_id = args.get("automation_id") or str(uuid.uuid4())
 
-    url = (
-        f"{HA_URL}/api/config/automation/config/{automation_id}"
-        if automation_id
-        else f"{HA_URL}/api/config/automation/config"
-    )
+    url = f"{HA_URL}/api/config/automation/config/{automation_id}"
     response = await client.post(url, json=config)
     if response.is_error:
         return _http_error(response, "create_automation")
