@@ -89,7 +89,7 @@ class _MQTTManager:
         hass: HomeAssistant,
         entry: ConfigEntry,
         namespace: str,
-        pending_conversations: dict[str, asyncio.Future[str]],
+        pending_conversations: dict[str, asyncio.Queue[str | None]],
         registered_workflows: dict[str, str],
     ) -> None:
         self._hass = hass
@@ -108,9 +108,8 @@ class _MQTTManager:
 
     async def stop(self) -> None:
         self._stop_event.set()
-        for future in self._pending_conversations.values():
-            if not future.done():
-                future.set_result("SAM connection closed.")
+        for queue in self._pending_conversations.values():
+            queue.put_nowait(None)
         self._pending_conversations.clear()
         if self._task:
             self._task.cancel()
@@ -143,6 +142,7 @@ class _MQTTManager:
                     ns = self._namespace
                     await client.subscribe(f"{ns}/ha/conversation/response/+")
                     await client.subscribe(f"{ns}/ha/conversation/error/+")
+                    await client.subscribe(f"{ns}/ha/conversation/stream/+")
                     await client.subscribe(f"{ns}/a2a/v1/discovery/agentcards")
                     _LOGGER.info(
                         "SAM Workflows MQTT connected to %s:%s",
@@ -153,7 +153,9 @@ class _MQTTManager:
                         if self._stop_event.is_set():
                             break
                         topic = str(message.topic)
-                        if "conversation/response" in topic:
+                        if "conversation/stream" in topic:
+                            self._on_stream(message)
+                        elif "conversation/response" in topic:
                             self._on_response(message)
                         elif "conversation/error" in topic:
                             self._on_error(message)
@@ -182,9 +184,11 @@ class _MQTTManager:
             return
         session_id = payload.get("session_id")
         text = payload.get("text", "").strip()
-        future = self._pending_conversations.pop(session_id, None)
-        if future and not future.done():
-            future.set_result(text or "(no response)")
+        queue = self._pending_conversations.pop(session_id, None)
+        if queue is not None:
+            if text:
+                queue.put_nowait(text)
+            queue.put_nowait(None)
 
     def _on_error(self, message: aiomqtt.Message) -> None:
         try:
@@ -194,9 +198,28 @@ class _MQTTManager:
             return
         session_id = payload.get("session_id")
         error_text = payload.get("error", "Unknown error from SAM.")
-        future = self._pending_conversations.pop(session_id, None)
-        if future and not future.done():
-            future.set_result(f"Sorry, SAM encountered an error: {error_text}")
+        queue = self._pending_conversations.pop(session_id, None)
+        if queue is not None:
+            queue.put_nowait(f"Sorry, SAM encountered an error: {error_text}")
+            queue.put_nowait(None)
+
+    def _on_stream(self, message: aiomqtt.Message) -> None:
+        try:
+            payload = json.loads(message.payload)
+        except (ValueError, TypeError):
+            _LOGGER.warning("Non-JSON payload on stream topic %s", message.topic)
+            return
+        session_id = str(message.topic).split("/")[-1]
+        queue = self._pending_conversations.get(session_id)
+        if queue is None:
+            return
+        chunk = payload.get("chunk", "")
+        done = payload.get("done", False)
+        if done:
+            self._pending_conversations.pop(session_id, None)
+            queue.put_nowait(None)
+        elif chunk:
+            queue.put_nowait(chunk)
 
     async def _on_agent_card(self, message: aiomqtt.Message) -> None:
         try:
@@ -266,7 +289,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     namespace: str = cfg["namespace"]
     timeout_seconds: int = cfg.get("timeout_seconds", 30)
 
-    pending_conversations: dict[str, asyncio.Future[str]] = {}
+    pending_conversations: dict[str, asyncio.Queue[str | None]] = {}
     registered_workflows: dict[str, str] = {}
 
     hass.data.setdefault(DOMAIN, {})[entry.entry_id] = {

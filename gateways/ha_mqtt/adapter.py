@@ -183,6 +183,9 @@ class HAMqttAdapter(GatewayAdapter):
         error_topic = (
             f"{ns}/ha/conversation/error/{session_id}" if session_id else None
         )
+        stream_topic = (
+            f"{ns}/ha/conversation/stream/{session_id}" if session_id else None
+        )
 
         return SamTask(
             parts=[SamTextPart(text=text)],
@@ -193,6 +196,7 @@ class HAMqttAdapter(GatewayAdapter):
                 "input_type": input_type,
                 "response_topic": response_topic,
                 "error_topic": error_topic,
+                "stream_topic": stream_topic,
             },
         )
 
@@ -202,23 +206,25 @@ class HAMqttAdapter(GatewayAdapter):
 
     async def handle_text_chunk(self, text: str, context: ResponseContext) -> None:
         self._response_buffers.setdefault(context.task_id, []).append(text)
+        stream_topic = context.platform_context.get("stream_topic")
+        if stream_topic and text:
+            await self._publish(stream_topic, {"chunk": text, "done": False})
 
     async def handle_task_complete(self, context: ResponseContext) -> None:
         parts = self._response_buffers.pop(context.task_id, [])
         full_text = "".join(parts).strip()
+
+        stream_topic = context.platform_context.get("stream_topic")
+        if stream_topic:
+            await self._publish(stream_topic, {"chunk": "", "done": True})
+
         response_topic = context.platform_context.get("response_topic")
-
-        if not response_topic:
-            return
-
-        if not full_text:
-            log.warning("Task %s completed with empty response", context.task_id)
-            return
-
-        await self._publish(
-            response_topic,
-            {"text": full_text, "session_id": context.session_id},
-        )
+        if response_topic and full_text:
+            # Still publish full response for backward-compatible clients.
+            await self._publish(
+                response_topic,
+                {"text": full_text, "session_id": context.session_id},
+            )
 
     async def handle_error(self, error: SamError, context: ResponseContext) -> None:
         self._response_buffers.pop(context.task_id, None)
