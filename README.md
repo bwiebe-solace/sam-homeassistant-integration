@@ -60,14 +60,14 @@ The included `sam_workflows` custom HA integration subscribes to SAM's agent dis
        +---> PDFReportAgent       |       |
               +-- fpdf2 docs      |       |
                                   |       |
-  +---------------------------+   |       |
-  | Home Assistant            |   |       |
-  |  +-- MQTT Integration ----+---+       |
-  |  +-- sam_workflows component ---------+
-  |       +-- Conversation agent          |
-  |       +-- STT / TTS providers         |
-  |       +-- Workflow service discovery  |
-  +---------------------------------------+
+  +---------------------------+           |
+  | Home Assistant            |           |
+  |  +-- sam_workflows -------+-----------+
+  |       (direct MQTT to Solace)
+  |       +-- Conversation agent
+  |       +-- STT / TTS providers
+  |       +-- Workflow service discovery
+  +---------------------------+
 
   +---------------------------+
   | SAM Workflows             |
@@ -116,11 +116,14 @@ cp .env.example .env
 Edit `.env` and fill in at minimum:
 
 ```env
-# Solace broker
+# Solace broker (SMF — used by SAM agents)
 SOLACE_BROKER_URL=wss://your-broker.messaging.solace.cloud:443
 SOLACE_BROKER_USERNAME=solace-cloud-client
 SOLACE_BROKER_PASSWORD=your-password
 SOLACE_BROKER_VPN=your-vpn-name
+
+# Solace broker (MQTT — used by HA MQTT gateway; just the hostname)
+SOLACE_MQTT_HOST=your-broker.messaging.solace.cloud
 
 # LLM — Gemini via OpenAI-compatible endpoint
 LLM_SERVICE_API_KEY=your-gemini-api-key
@@ -147,7 +150,14 @@ docker compose up -d
 
 The web UI is available at `http://<host>:8000`.
 
-Docker images are built automatically on every push to `main` and published to GHCR. To update a running deployment:
+Two image variants are published to GHCR on every push to `main`:
+
+| Tag | Contents |
+|---|---|
+| `latest` | Base image — all core agents and workflows |
+| `homelab` | Base + homelab agents (Pi-hole, Proxmox, etc.) from [sam-homelab-agents](https://github.com/bwiebe-solace/sam-homelab-agents) |
+
+The `docker-compose.yml` uses `latest` by default. To update a running deployment:
 
 ```bash
 docker compose pull && docker compose up -d
@@ -165,21 +175,19 @@ GOOGLE_CSE_ID=your-cse-id
 - API key: [console.cloud.google.com](https://console.cloud.google.com) -> enable "Custom Search API"
 - CSE ID: [cse.google.com](https://cse.google.com) -> create a search engine set to "Search the entire web"
 
-### 4. (Optional) Enable the HA MQTT gateway
+### 4. Enable the HA MQTT gateway (required for conversation + workflow invocation)
 
-The MQTT gateway allows Home Assistant automations to send requests to SAM. It is disabled by default. To enable it, rename the config file to remove the `_` prefix:
+The HA MQTT gateway is the SAM-side bridge that receives conversation requests and workflow invocations from the `sam_workflows` HA component. Without it, those features silently do nothing.
 
-```bash
-mv configs/gateways/_ha-mqtt.yaml configs/gateways/ha-mqtt.yaml
-```
-
-Then add these to your `.env`:
+It is already included in the image. Enable it by adding to your `.env`:
 
 ```env
 SOLACE_MQTT_HOST=your-broker.messaging.solace.cloud
-SOLACE_MQTT_PORT=8883
-SOLACE_MQTT_TLS=true
+# SOLACE_MQTT_PORT=8883   # default, only override if needed
+# SOLACE_MQTT_TLS=true    # default, only override if needed
 ```
+
+If `SOLACE_MQTT_HOST` is not set the gateway loads but does nothing (no errors).
 
 ---
 
