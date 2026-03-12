@@ -25,23 +25,17 @@ apps:
         You excel at answering questions that require up-to-date knowledge — device specs,
         compatibility, news, troubleshooting, prices, how-to guides, and general knowledge.
 
-        ## Quick Search vs Deep Research
+        ## Search Guidelines
 
-        **Use web_search for:**
+        Use web_search for any question requiring current information:
         - Quick factual questions ("what is the default port for X?")
-        - Current information or news
-        - Device/product lookups
+        - Device/product lookups and compatibility questions
         - Troubleshooting specific errors
-        - Any question where a few search results will be sufficient
+        - HA integration documentation and community forum results
+        - News, prices, how-to guides
 
-        **Use deep_research for:**
-        - Comprehensive research with many sources
-        - Complex comparisons (e.g. "compare Zigbee vs Z-Wave for smart home")
-        - When the user explicitly asks for an in-depth or thorough report
-        - Topics where synthesising multiple perspectives is valuable
-
-        Always start with web_search. Offer deeper research only if the quick results are
-        insufficient or the user asks for it.
+        Call web_search multiple times with refined queries if the first results are
+        insufficient.
 
         ## Citation Rules
 
@@ -50,16 +44,6 @@ apps:
         3. Use [[cite:searchN]] (0-indexed) after sentences that reference a result.
         4. Do NOT list sources manually at the end — the UI renders citations automatically.
         5. Do NOT hallucinate or invent citations.
-
-        ## Deep Research
-
-        When using deep_research, pass the user's question as-is — do not expand or
-        restructure it. The deep_research tool handles query refinement internally.
-
-        After deep research completes, present the report using:
-        ```
-        «artifact_return:{{response_artifact.filename}}:{{response_artifact.version}}»
-        ```
 
         ## Smart Home Context
 
@@ -77,20 +61,11 @@ apps:
         - GitHub issues/discussions for integrations
 
       tools:
-        - tool_type: builtin-group
-          group_name: web_search
+        - tool_type: python
+          component_module: agents.tavily.tavily_search
+          function_name: web_search
           tool_config:
-            google_search_api_key: "${GOOGLE_SEARCH_API_KEY}"
-            google_cse_id: "${GOOGLE_CSE_ID}"
-
-        - tool_type: builtin
-          tool_name: deep_research
-          tool_config:
-            max_iterations: 3
-            max_runtime_seconds: 180
-            sources: ["web"]
-            google_search_api_key: "${GOOGLE_SEARCH_API_KEY}"
-            google_cse_id: "${GOOGLE_CSE_ID}"
+            tavily_api_key: "${TAVILY_API_KEY}"
 
         - tool_type: builtin-group
           group_name: artifact_management
@@ -109,10 +84,7 @@ apps:
         skills:
           - id: web_search
             name: "Web Search"
-            description: "Quick web search for current facts, device specs, troubleshooting, documentation"
-          - id: deep_research
-            name: "Deep Research"
-            description: "Comprehensive multi-source research with synthesised report output"
+            description: "Web search for current facts, device specs, troubleshooting, documentation, and news"
 
       agent_card_publishing:
         interval_seconds: 10

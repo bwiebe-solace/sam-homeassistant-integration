@@ -98,7 +98,7 @@ Optional:
 
 | Requirement | Notes |
 |---|---|
-| Google Search API key + CSE ID | Required for the Research Agent |
+| Tavily API key | Required for the Research Agent — free tier at [tavily.com](https://tavily.com) (1000 queries/month) |
 | HA MQTT integration | Only needed if you want to trigger SAM from HA automations via `mqtt.publish` |
 
 ---
@@ -165,15 +165,13 @@ docker compose pull && docker compose up -d
 
 ### 3. (Optional) Enable the Research Agent
 
-Add Google Custom Search credentials to `.env`:
+Add a Tavily API key to `.env`:
 
 ```env
-GOOGLE_SEARCH_API_KEY=your-google-api-key
-GOOGLE_CSE_ID=your-cse-id
+TAVILY_API_KEY=your-tavily-api-key
 ```
 
-- API key: [console.cloud.google.com](https://console.cloud.google.com) -> enable "Custom Search API"
-- CSE ID: [cse.google.com](https://cse.google.com) -> create a search engine set to "Search the entire web"
+Get a free key at [tavily.com](https://tavily.com) (1000 queries/month on the free tier).
 
 ### 4. Enable the HA MQTT gateway (required for conversation + workflow invocation)
 
